@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:17
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_DB: kauth
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password} # Use env var
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  express:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: express
+    restart: always
+    ports:
+      - "6767:6767"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: "6767"
+      BUN_ENV: "dev"
+      DATABASE_URL: "postgresql://postgres:${DB_PASSWORD:-password}@db:5432/kauth?schema=public"
+      JWT_SECRET: ${JWT_SECRET:-dev-secret}
+    volumes:
+      - ./:/app # Dev: hot reload
+      - /app/node_modules # Prevent host node_modules override
+    # Optional: Remove volumes for production build
+
+volumes:
+  postgres_data:
+  node_modules:
