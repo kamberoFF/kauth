@@ -1,7 +1,8 @@
 import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
+import config from "../config";
 
-const JWT_SECRET = process.env.JWT_SECRET!;
+const JWT_SECRET = config.jwt_secret;
 
 export const generateTokens = (userId: string) => {
   const a_jwtid = uuidv4();

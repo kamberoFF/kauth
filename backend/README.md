@@ -3,13 +3,17 @@
 To install dependencies:
 
 ```bash
-bun install
+yarn install
 ```
 
-To run:
+To run the API in development:
 
 ```bash
-bun run 
+yarn dev
 ```
 
-This project was created using `bun init` in bun v1.3.9. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+To run Prisma Studio:
+
+```bash
+yarn studio
+```

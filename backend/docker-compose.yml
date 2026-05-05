@@ -8,11 +8,11 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${DB_PASSWORD:-password} # Use env var
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -30,11 +30,12 @@ services:
         condition: service_healthy
     environment:
       PORT: "6767"
-      BUN_ENV: "dev"
-      DATABASE_URL: "postgresql://postgres:${DB_PASSWORD:-password}@db:5432/kauth?schema=public"
+      NODE_ENV: "development"
+      DATABASE_URL: "postgresql://postgres:${DB_PASSWORD:-password}@db:5432/kauth?sch\
+        ema=public"
       JWT_SECRET: ${JWT_SECRET:-dev-secret}
     volumes:
-      - ./:/app # Dev: hot reload
+      - ./:/app # Mount source for local development
       - /app/node_modules # Prevent host node_modules override
     # Optional: Remove volumes for production build
 

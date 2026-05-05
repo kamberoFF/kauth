@@ -14,7 +14,7 @@
     "noEmit": true,
 
     // Type resolution
-    "types": ["bun"],
+    "types": ["node"],
     "typeRoots": ["./node_modules/@types", "./types"],
 
     // Best practices

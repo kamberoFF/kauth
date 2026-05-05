@@ -1,9 +1,3 @@
-const mockUser = {
-  name: "anon",
-  email: "anon@example.com",
-  password: "676767"
-}
-
 function App() {
   return (
     <main className="flex flex-col w-svw h-svh p-4 justify-start items-center bg-white">
@@ -12,7 +6,7 @@ function App() {
         <div className="flex-1 p-4">Text</div>
       </div>
     </main>
-  )
+  );
 }
 
-export default App
+export default App;
