@@ -4,13 +4,7 @@ import { generateTokens, verifyRefreshToken } from "../lib/jwt";
 import { prisma } from "../lib/prisma";
 import { registerSchema, loginSchema, refreshSchema } from "../lib/validation";
 import type { DeviceRequest, AuthDeviceRequest } from "../types/auth";
-
-// Helper to attach HTTP status for your errorHandler
-const appError = (message: string, status: number, cause?: string) => {
-  const err = new Error(message, { cause }) as Error & { status: number };
-  err.status = status;
-  return err;
-};
+import { appError } from "../utils/errors";
 
 export const register = async (
   req: DeviceRequest,
