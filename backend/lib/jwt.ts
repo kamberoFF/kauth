@@ -1,42 +1,50 @@
 import jwt from "jsonwebtoken";
-import { v4 as uuidv4 } from "uuid";
+import crypto from "node:crypto";
 import config from "../config";
+import type {
+  AccessToken,
+  GenerateTokensParams,
+  RefreshToken,
+} from "../types/jwt";
 
 const JWT_SECRET = config.jwt_secret;
 
-export const generateTokens = (userId: string) => {
-  const a_jwtid = uuidv4();
-  const r_jwtid = uuidv4();
-  const accessToken = jwt.sign({ userId }, JWT_SECRET, {
-    jwtid: a_jwtid,
+export const generateTokens = ({
+  userId,
+  familyId,
+}: GenerateTokensParams): {
+  familyId: string;
+  accessToken: AccessToken;
+  refreshToken: RefreshToken;
+} => {
+  const jwtid = crypto.randomUUID();
+
+  const accessToken = jwt.sign({ userId, familyId }, JWT_SECRET, {
+    jwtid,
     expiresIn: "15m",
   });
-  const refreshToken = jwt.sign({ userId }, JWT_SECRET, {
-    jwtid: r_jwtid,
-    expiresIn: "7d",
-  });
-  return { accessToken, refreshToken, a_jwtid, r_jwtid };
+
+  const selector = crypto.randomBytes(16).toString("base64url");
+  const verifier = crypto.randomBytes(32).toString("base64url");
+
+  const refreshToken = `${selector}.${verifier}`;
+
+  return {
+    familyId,
+    accessToken: { userId, jti: jwtid, token: accessToken },
+    refreshToken: { selector, verifier, token: refreshToken },
+  };
 };
 
 export const verifyAccessToken = (token: string) => {
   try {
     const payload = jwt.verify(token, JWT_SECRET) as {
-      userId: string;
       jti: string;
+      familyId: string;
+      userId: string;
     };
-    return { userId: payload.userId, jwtid: payload.jti };
-  } catch {
-    return null;
-  }
-};
 
-export const verifyRefreshToken = (token: string) => {
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as {
-      userId: string;
-      jti: string;
-    };
-    return { userId: payload.userId, jwtid: payload.jti };
+    return payload;
   } catch {
     return null;
   }

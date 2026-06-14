@@ -1,31 +1,30 @@
-import { type Response, type NextFunction } from "express";
+import { type RequestHandler } from "express";
+import crypto from "node:crypto";
 import bcrypt from "bcrypt";
-import { generateTokens, verifyRefreshToken } from "../lib/jwt";
+import { generateTokens } from "../lib/jwt";
 import { prisma } from "../lib/prisma";
 import { registerSchema, loginSchema, refreshSchema } from "../lib/validation";
-import type { DeviceRequest, AuthDeviceRequest } from "../types/auth";
 import { appError } from "../utils/errors";
+import { requireDeviceId } from "../utils/requestGuards";
 
-export const register = async (
-  req: DeviceRequest,
-  res: Response,
-  next: NextFunction,
-) => {
+export const register: RequestHandler = async (req, res, next) => {
   try {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success)
-      return next(appError("Invalid input", 400, "validation"));
+      return next(appError(400, "Invalid input", "validation"));
 
     const { email, username, password, first_name, last_name } = parsed.data;
-    const deviceId = req.deviceId!;
+
+    // deviceId is guaranteed by validateDevice middleware
+    const deviceId = requireDeviceId(req);
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing)
-      return next(appError("User already exists", 409, "duplicate_email"));
+      return next(appError(409, "User already exists", "duplicate_email"));
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // ✅ Atomic: user + token creation
+    // ✅ Atomic: user + session creation
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -36,11 +35,24 @@ export const register = async (
           last_name,
         },
       });
-      const tokens = generateTokens(user.id);
-      await tx.refreshToken.create({
-        data: { id: tokens.r_jwtid, deviceId, user_id: user.id },
+
+      const familyId = crypto.randomUUID();
+
+      const { accessToken, refreshToken } = generateTokens({
+        userId: user.id,
+        familyId,
       });
-      return { user, tokens };
+
+      const refreshTokenHash = await bcrypt.hash(refreshToken.verifier, 10);
+
+      const session
+      });
+
+      return {
+        user,
+        accessToken,
+        refreshToken,
+      };
     });
 
     res.status(201).json({
@@ -52,7 +64,6 @@ export const register = async (
         lastName: last_name,
       },
       accessToken: result.tokens.accessToken,
-      refreshToken: result.tokens.refreshToken,
     });
   } catch (error) {
     next(error);
@@ -67,10 +78,10 @@ export const login = async (
   try {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success)
-      return next(appError("Invalid input", 400, "validation"));
+      return next(appError(400, "Invalid input", "validation"));
 
     const { email, password } = parsed.data;
-    const deviceId = req.deviceId!;
+    const deviceId = req.deviceId;
 
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user || !(await bcrypt.compare(password, user.password))) {

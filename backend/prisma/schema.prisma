@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -13,38 +8,220 @@ datasource db {
 }
 
 model User {
-  @@map("users")
-  id String @db.Uuid @id @default(uuid())
-  email String @unique
-  username String @unique
-  password String 
+
+  id         String  @id @default(uuid()) @db.Uuid
+  email      String  @unique
+  username   String  @unique
+  password   String
   first_name String?
-  last_name String?
-  role Role @default(USER)
-  refreshToken RefreshToken[]
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
+  last_name  String?
+  role       Role    @default(USER)
+
+  sessions       Session[]
+  recoveryTokens RecoveryToken[]
+  securityEvents SecurityEvent[]
+
+  created_at    DateTime       @default(now())
+  updated_at    DateTime       @updatedAt
+  refreshTokens RefreshToken[]
+
   @@index([email, username])
+  @@map("users")
+}
+
+model Session {
+
+  id      String @id @default(uuid()) @db.Uuid
+  user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user_id String @db.Uuid
+
+  /**
+   * One logical login/browser profile/device session.
+   * Do NOT trust this as a physical device identity.
+   * It is a server-created session record.
+   */
+
+  status SessionStatus @default(ACTIVE)
+
+  created_at     DateTime  @default(now())
+  last_used_at   DateTime?
+  expires_at     DateTime
+  revoked_at     DateTime?
+  revoked_reason String?
+
+  /**
+   * Optional server-generated install/browser id.
+   * Useful for grouping "same browser profile probably",
+   * but NOT a security boundary.
+   */
+  device_id String? @db.Uuid
+
+  /**
+   * Human-readable display metadata.
+   */
+  device_name     String?
+  device_type     DeviceType?
+  os_name         String?
+  os_version      String?
+  browser_name    String?
+  browser_version String?
+
+  /**
+   * Raw-ish metadata for security/risk decisions.
+   * Avoid depending on this as proof of identity.
+   */
+  user_agent_created String?
+  user_agent_last    String?
+
+  ip_created String?
+  ip_last    String?
+
+  country_created String?
+  country_last    String?
+  city_created    String?
+  city_last       String?
+
+  /**
+   * Optional weak fingerprint.
+   * Store a hash, not the raw fingerprint object.
+   * Use only as risk signal.
+   */
+  fingerprint_hash String?
+
+  refreshTokens  RefreshToken[]
+  securityEvents SecurityEvent[]
+  csrfTokens     CsrfToken[]
+
+  @@index([user_id])
+  @@index([user_id, status])
+  @@index([device_id])
+  @@index([last_used_at])
+  @@map("sessions")
 }
 
 model RefreshToken {
-  @@map("refresh_tokens")
-  id String @db.Uuid @id
-  deviceId String @db.Uuid
-  user User @relation(fields: [user_id], references: [id])
+
+  id String @id @default(uuid()) @db.Uuid
+  selector String @unique
+
+  session    Session @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  session_id String      @db.Uuid
+
+  user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   user_id String @db.Uuid
-  created_at DateTime @default(now())
-  @@unique([user_id, deviceId])
-  @@index([deviceId, user_id])
+
+  /**
+   * All rotated tokens for one session share this family_id.
+   * If reuse is detected, revoke the whole family/session.
+   */
+  family_id String @db.Uuid
+
+  /**
+   * Store bcrypt hash of opaque random token.
+   * NEVER store the raw refresh token.
+   */
+  token_hash String @unique
+
+  status RefreshTokenStatus @default(ACTIVE)
+
+  created_at           DateTime  @default(now())
+  expires_at           DateTime
+  consumed_at          DateTime?
+  revoked_at           DateTime?
+  replaced_by_token_id String?   @db.Uuid
+
+  /**
+   * Reuse detection / auditing metadata.
+   */
+  created_by_ip  String?
+  consumed_by_ip String?
+
+  created_by_user_agent  String?
+  consumed_by_user_agent String?
+
+  @@index([selector])
+  @@index([session_id])
+  @@index([user_id])
+  @@index([family_id])
+  @@index([status])
+  @@index([expires_at])
+  @@map("refresh_tokens")
+}
+
+model CsrfToken {
+
+  id String @id @default(uuid()) @db.Uuid
+
+  session    Session @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  session_id String      @db.Uuid
+
+  /**
+   * Hash this too if you want to be extra clean.
+   * For double-submit cookie you may not need DB storage,
+   * but DB-backed CSRF can be useful while learning.
+   */
+  token_hash String @unique
+
+  created_at DateTime  @default(now())
+  expires_at DateTime
+  used_at    DateTime?
+
+  @@index([session_id])
+  @@index([expires_at])
+  @@map("csrf_tokens")
 }
 
 model RecoveryToken {
-  @@map("recovery_tokens")
-  id String @db.Uuid @id @default(uuid())
-  token String @db.Uuid @default(uuid())
+
+  id String @id @default(uuid()) @db.Uuid
+
+  user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user_id String @db.Uuid
+
+  /**
+   * Same idea: opaque random token, store hash.
+   * Do NOT store raw password reset/email confirmation tokens.
+   */
+  token_hash String @unique
+
   token_type TokenType
+
+  created_at  DateTime  @default(now())
+  expires_at  DateTime
+  consumed_at DateTime?
+
+  @@index([user_id])
+  @@index([token_hash])
+  @@index([token_type])
+  @@index([expires_at])
+  @@map("recovery_tokens")
+}
+
+model SecurityEvent {
+
+  id String @id @default(uuid()) @db.Uuid
+
+  user    User?   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user_id String? @db.Uuid
+
+  session    Session? @relation(fields: [session_id], references: [id], onDelete: SetNull)
+  session_id String?      @db.Uuid
+
+  event_type SecurityEventType
+  severity   SecurityEventSeverity @default(INFO)
+
+  ip         String?
+  user_agent String?
+
+  metadata Json?
+
   created_at DateTime @default(now())
-  @@index([token])
+
+  @@index([user_id])
+  @@index([session_id])
+  @@index([event_type])
+  @@index([created_at])
+  @@map("security_events")
 }
 
 enum Role {
@@ -53,6 +230,49 @@ enum Role {
 }
 
 enum TokenType {
-  EMAIL_CONFIRATION
+  EMAIL_CONFIRMATION
   PASSWORD_RESET
+}
+
+enum SessionStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum RefreshTokenStatus {
+  ACTIVE
+  CONSUMED
+  REVOKED
+  EXPIRED
+}
+
+enum DeviceType {
+  DESKTOP
+  MOBILE
+  TABLET
+  BOT
+  UNKNOWN
+}
+
+enum SecurityEventType {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  LOGOUT
+  LOGOUT_ALL
+  REFRESH_SUCCESS
+  REFRESH_REUSE_DETECTED
+  SESSION_REVOKED
+  PASSWORD_CHANGED
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_RESET_COMPLETED
+  EMAIL_CONFIRMATION_SENT
+  EMAIL_CONFIRMED
+  SUSPICIOUS_ACTIVITY
+}
+
+enum SecurityEventSeverity {
+  INFO
+  WARNING
+  CRITICAL
 }

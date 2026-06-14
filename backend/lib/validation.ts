@@ -1,5 +1,6 @@
 // lib/validation.ts
 import { z } from "zod";
+import { UUID_REGEX } from "../constants/regex";
 
 export const registerSchema = z.object({
   email: z.email(),
@@ -15,5 +16,5 @@ export const loginSchema = z.object({
 });
 
 export const refreshSchema = z.object({
-  refreshToken: z.string().min(1),
+  refreshToken: z.regex(UUID_REGEX, "Invalid refresh token format"),
 });

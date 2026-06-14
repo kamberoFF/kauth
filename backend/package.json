@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "fixLint": "eslint . --fix",
     "format": "prettier --write .",
+    "prisma:reset": "prisma migrate reset --force",
     "prisma:generate": "prisma generate",
     "seed": "tsx prisma/seed.ts",
     "studio": "prisma studio"
@@ -16,6 +17,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/bcrypt": "^6.0.0",
+    "@types/cookie-parser": "^1.4.10",
     "@types/express": "^4.17.25",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.19.37",
@@ -34,13 +36,18 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.5.0",
     "@prisma/client": "^7.5.0",
+    "@types/cors": "^2.8.19",
     "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
+    "express-rate-limit": "^8.5.2",
     "express-validator": "^7.3.1",
+    "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.20.0",
-    "uuid": "^13.0.0",
-    "zod": "^4.3.6"
+    "ua-parser-js": "^2.0.10",
+    "zod": "^4.4.3"
   }
 }
