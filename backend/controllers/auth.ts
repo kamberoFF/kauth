@@ -1,11 +1,28 @@
-import { type RequestHandler } from "express";
 import crypto from "node:crypto";
+import { type RequestHandler } from "express";
 import bcrypt from "bcrypt";
-import { generateTokens } from "../lib/jwt";
+import { generateTokens, parseRefreshToken } from "../lib/jwt";
 import { prisma } from "../lib/prisma";
 import { registerSchema, loginSchema, refreshSchema } from "../lib/validation";
 import { appError } from "../utils/errors";
-import { requireDeviceId } from "../utils/requestGuards";
+import { requireDeviceId, requireUserId } from "../utils/requestGuards";
+import { CREDENTIAL_PROVIDER } from "../constants/providers";
+import config from "../config";
+import { issueRecoveryToken } from "../lib/recoveryTokens";
+import { sendMail, verificationEmail } from "../lib/mail";
+import {
+  clientContext,
+  createSession,
+  revokeRefreshFamily,
+  revokeSessions,
+} from "../lib/sessions";
+import {
+  recordSecurityEvent,
+  tryRecordSecurityEvent,
+} from "../lib/securityEvents";
+
+const PASSWORD_HASH_ROUNDS = 10;
+const REFRESH_HASH_ROUNDS = 10;
 
 export const register: RequestHandler = async (req, res, next) => {
   try {
@@ -14,45 +31,66 @@ export const register: RequestHandler = async (req, res, next) => {
       return next(appError(400, "Invalid input", "validation"));
 
     const { email, username, password, first_name, last_name } = parsed.data;
+    const context = clientContext(req, requireDeviceId(req));
 
-    // deviceId is guaranteed by validateDevice middleware
-    const deviceId = requireDeviceId(req);
+    // Both columns are unique, so an unchecked username collision would surface
+    // as an unhandled P2002 rather than a 409. The error handler still maps the
+    // race, but the common case deserves a specific code.
+    const [existingEmail, existingUsername] = await Promise.all([
+      prisma.user.findUnique({ where: { email }, select: { id: true } }),
+      prisma.user.findUnique({ where: { username }, select: { id: true } }),
+    ]);
 
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing)
+    if (existingEmail)
       return next(appError(409, "User already exists", "duplicate_email"));
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    if (existingUsername)
+      return next(appError(409, "Username is taken", "duplicate_username"));
 
-    // ✅ Atomic: user + session creation
+    const passwordHash = await bcrypt.hash(password, PASSWORD_HASH_ROUNDS);
+
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
+        data: { email, username, first_name, last_name },
+      });
+
+      await tx.account.create({
         data: {
-          email,
-          username,
+          user_id: user.id,
+          provider_id: CREDENTIAL_PROVIDER,
+          account_id: user.id,
           password: passwordHash,
-          first_name,
-          last_name,
         },
       });
 
-      const familyId = crypto.randomUUID();
+      const created = await createSession(tx, user.id, context);
 
-      const { accessToken, refreshToken } = generateTokens({
-        userId: user.id,
-        familyId,
-      });
+      await recordSecurityEvent(
+        {
+          type: "USER_REGISTERED",
+          userId: user.id,
+          sessionId: created.session.id,
+          ip: context.ip,
+          userAgent: context.userAgent,
+          metadata: { provider: CREDENTIAL_PROVIDER },
+        },
+        tx,
+      );
 
-      const refreshTokenHash = await bcrypt.hash(refreshToken.verifier, 10);
+      return { user, ...created };
+    });
 
-      const session
-      });
+    const verificationToken = await issueRecoveryToken(
+      result.user.id,
+      "EMAIL_CONFIRMATION",
+    );
 
-      return {
-        user,
-        accessToken,
-        refreshToken,
-      };
+    await sendMail(verificationEmail(result.user.email, verificationToken));
+    await tryRecordSecurityEvent({
+      type: "EMAIL_CONFIRMATION_SENT",
+      userId: result.user.id,
+      ip: context.ip,
+      userAgent: context.userAgent,
     });
 
     res.status(201).json({
@@ -60,123 +98,317 @@ export const register: RequestHandler = async (req, res, next) => {
         id: result.user.id,
         username: result.user.username,
         email: result.user.email,
-        firstName: first_name,
-        lastName: last_name,
+        emailVerified: result.user.email_verified,
+        firstName: result.user.first_name,
+        lastName: result.user.last_name,
       },
-      accessToken: result.tokens.accessToken,
+      accessToken: result.accessToken.token,
+      refreshToken: result.refreshToken.token,
     });
   } catch (error) {
     next(error);
   }
 };
 
-export const login = async (
-  req: DeviceRequest,
-  res: Response,
-  next: NextFunction,
-) => {
+export const login: RequestHandler = async (req, res, next) => {
   try {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success)
       return next(appError(400, "Invalid input", "validation"));
 
     const { email, password } = parsed.data;
-    const deviceId = req.deviceId;
+    const context = clientContext(req, requireDeviceId(req));
 
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-      return next(appError("Invalid credentials", 401, "auth_failed"));
-    }
-
-    const { accessToken, refreshToken, r_jwtid } = generateTokens(user.id);
-
-    // ✅ Atomic: remove old device session + create new token
-    await prisma.$transaction(async (tx) => {
-      await tx.refreshToken.deleteMany({
-        where: { user_id: user.id, deviceId },
-      });
-      await tx.refreshToken.create({
-        data: { id: r_jwtid, deviceId, user_id: user.id },
-      });
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: {
+        accounts: { where: { provider_id: CREDENTIAL_PROVIDER }, take: 1 },
+      },
     });
 
-    res.json({ accessToken, refreshToken });
+    const credential = user?.accounts[0];
+    const passwordMatches =
+      credential?.password != null &&
+      (await bcrypt.compare(password, credential.password));
+
+    if (!user || !passwordMatches) {
+      await tryRecordSecurityEvent({
+        type: "LOGIN_FAILED",
+        userId: user?.id ?? null,
+        ip: context.ip,
+        userAgent: context.userAgent,
+        metadata: {
+          email,
+          reason: !user
+            ? "unknown_account"
+            : credential?.password == null
+              ? "no_credential_account"
+              : "bad_password",
+        },
+      });
+
+      return next(appError(401, "Invalid credentials", "auth_failed"));
+    }
+
+    // Checked only after the password, so the verification state of an account
+    // is never disclosed to someone who cannot already sign in.
+    if (config.require_email_verification && !user.email_verified) {
+      await tryRecordSecurityEvent({
+        type: "LOGIN_FAILED",
+        userId: user.id,
+        ip: context.ip,
+        userAgent: context.userAgent,
+        metadata: { email, reason: "email_not_verified" },
+      });
+
+      return next(
+        appError(403, "Email address not confirmed", "email_not_verified"),
+      );
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      await revokeSessions(
+        tx,
+        { user_id: user.id, device_id: context.deviceId },
+        "replaced_by_new_login",
+      );
+
+      const created = await createSession(tx, user.id, context);
+
+      await recordSecurityEvent(
+        {
+          type: "LOGIN_SUCCESS",
+          userId: user.id,
+          sessionId: created.session.id,
+          ip: context.ip,
+          userAgent: context.userAgent,
+          metadata: { provider: CREDENTIAL_PROVIDER },
+        },
+        tx,
+      );
+
+      return created;
+    });
+
+    res.json({
+      accessToken: result.accessToken.token,
+      refreshToken: result.refreshToken.token,
+    });
   } catch (error) {
     next(error);
   }
 };
 
-export const refresh = async (
-  req: DeviceRequest,
-  res: Response,
-  next: NextFunction,
-) => {
+export const refresh: RequestHandler = async (req, res, next) => {
   try {
     const parsed = refreshSchema.safeParse(req.body);
     if (!parsed.success)
-      return next(appError("Invalid input", 400, "validation"));
+      return next(appError(400, "Invalid input", "validation"));
 
-    const { refreshToken } = parsed.data;
-    const deviceId = req.deviceId!;
+    const context = clientContext(req, requireDeviceId(req));
+    const presented = parseRefreshToken(parsed.data.refreshToken);
 
-    const payload = verifyRefreshToken(refreshToken);
-    if (!payload)
-      return next(appError("Invalid refresh token", 401, "token_invalid"));
+    if (!presented) {
+      return next(appError(401, "Invalid refresh token", "token_invalid"));
+    }
 
-    const tokenCheck = await prisma.refreshToken.findUnique({
-      where: { id: payload.jwtid },
+    const storedToken = await prisma.refreshToken.findUnique({
+      where: { selector: presented.selector },
+      include: { session: true },
     });
 
-    if (!tokenCheck) {
-      // 🚨 Compromised: revoke all sessions & reject
-      await prisma.refreshToken.deleteMany({
-        where: { user_id: payload.userId },
+    if (!storedToken) {
+      return next(appError(401, "Invalid refresh token", "token_invalid"));
+    }
+
+    // The verifier is checked before any revocation decision: acting on a bare
+    // selector would let anyone who observed one kill a stranger's session.
+    const verifierMatches = await bcrypt.compare(
+      presented.verifier,
+      storedToken.token_hash,
+    );
+
+    if (!verifierMatches) {
+      return next(appError(401, "Invalid refresh token", "token_invalid"));
+    }
+
+    const now = new Date();
+
+    // Only a token that was already exchanged is evidence of theft. A token we
+    // revoked ourselves (logout, password change) is not, and must not escalate.
+    if (storedToken.consumed_at || storedToken.status === "CONSUMED") {
+      await prisma.$transaction(async (tx) => {
+        await revokeRefreshFamily(
+          tx,
+          storedToken.family_id,
+          storedToken.session_id,
+          "refresh_token_reuse_detected",
+        );
+
+        await recordSecurityEvent(
+          {
+            type: "REFRESH_REUSE_DETECTED",
+            userId: storedToken.user_id,
+            sessionId: storedToken.session_id,
+            ip: context.ip,
+            userAgent: context.userAgent,
+            metadata: {
+              family_id: storedToken.family_id,
+              consumed_at: storedToken.consumed_at?.toISOString() ?? null,
+            },
+          },
+          tx,
+        );
       });
-      console.warn(
-        `Compromised session detected for user ${payload.userId}. All tokens revoked.`,
-      );
+
       return next(
         appError(
-          "Session compromised. All tokens revoked.",
           401,
-          "compromised",
+          "Refresh token reuse detected. Session revoked.",
+          "token_reused",
         ),
       );
     }
 
-    const {
-      accessToken,
-      refreshToken: newRefreshToken,
-      r_jwtid,
-    } = generateTokens(payload.userId);
+    if (storedToken.status === "REVOKED" || storedToken.revoked_at) {
+      return next(appError(401, "Refresh token revoked", "token_revoked"));
+    }
 
-    // ✅ Atomic rotation: delete old + create new
-    await prisma.$transaction(async (tx) => {
-      await tx.refreshToken.delete({ where: { id: payload.jwtid } });
-      await tx.refreshToken.create({
-        data: { id: r_jwtid, deviceId, user_id: payload.userId },
-      });
+    if (storedToken.status === "EXPIRED" || storedToken.expires_at <= now) {
+      await prisma.$transaction([
+        prisma.refreshToken.update({
+          where: { id: storedToken.id },
+          data: { status: "EXPIRED" },
+        }),
+        prisma.session.updateMany({
+          where: { id: storedToken.session_id, status: "ACTIVE" },
+          data: { status: "EXPIRED" },
+        }),
+      ]);
+
+      return next(appError(401, "Refresh token expired", "token_expired"));
+    }
+
+    if (storedToken.status !== "ACTIVE") {
+      return next(appError(401, "Invalid refresh token", "token_invalid"));
+    }
+
+    const { session } = storedToken;
+
+    if (
+      session.status !== "ACTIVE" ||
+      session.revoked_at ||
+      session.expires_at <= now
+    ) {
+      return next(
+        appError(401, "Session is no longer active", "session_inactive"),
+      );
+    }
+
+    if (session.device_id && session.device_id !== context.deviceId) {
+      return next(
+        appError(
+          401,
+          "Refresh token does not match the current device context",
+          "device_mismatch",
+        ),
+      );
+    }
+
+    const nextRefreshTokenId = crypto.randomUUID();
+    const { accessToken, refreshToken } = generateTokens({
+      userId: storedToken.user_id,
+      familyId: storedToken.family_id,
     });
 
-    res.json({ accessToken, newRefreshToken });
+    // The replacement dies with its session rather than outliving it, so the
+    // advertised lifetime and the enforced one agree.
+    const refreshExpiresAt = session.expires_at;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.refreshToken.update({
+        where: { id: storedToken.id },
+        data: {
+          status: "CONSUMED",
+          consumed_at: now,
+          consumed_by_ip: context.ip,
+          consumed_by_user_agent: context.userAgent,
+          replaced_by_token_id: nextRefreshTokenId,
+        },
+      });
+
+      await tx.session.update({
+        where: { id: storedToken.session_id },
+        data: {
+          last_used_at: now,
+          user_agent_last: context.userAgent,
+          ip_last: context.ip,
+        },
+      });
+
+      await tx.refreshToken.create({
+        data: {
+          id: nextRefreshTokenId,
+          selector: refreshToken.selector,
+          session_id: storedToken.session_id,
+          user_id: storedToken.user_id,
+          family_id: storedToken.family_id,
+          token_hash: await bcrypt.hash(
+            refreshToken.verifier,
+            REFRESH_HASH_ROUNDS,
+          ),
+          expires_at: refreshExpiresAt,
+          created_by_ip: context.ip,
+          created_by_user_agent: context.userAgent,
+        },
+      });
+
+      await recordSecurityEvent(
+        {
+          type: "REFRESH_SUCCESS",
+          userId: storedToken.user_id,
+          sessionId: storedToken.session_id,
+          ip: context.ip,
+          userAgent: context.userAgent,
+        },
+        tx,
+      );
+    });
+
+    res.json({
+      accessToken: accessToken.token,
+      refreshToken: refreshToken.token,
+    });
   } catch (error) {
     next(error);
   }
 };
 
-export const logout = async (
-  req: AuthDeviceRequest,
-  res: Response,
-  next: NextFunction,
-) => {
+export const logout: RequestHandler = async (req, res, next) => {
   try {
-    const userId = req.userId!;
-    const deviceId = req.deviceId!;
+    const userId = requireUserId(req);
+    const context = clientContext(req, requireDeviceId(req));
 
-    // ✅ deleteMany won't crash if token already gone
-    await prisma.refreshToken.deleteMany({
-      where: { user_id: userId, deviceId },
+    await prisma.$transaction(async (tx) => {
+      const revoked = await revokeSessions(
+        tx,
+        { user_id: userId, device_id: context.deviceId },
+        "user_logout",
+      );
+
+      await recordSecurityEvent(
+        {
+          type: "LOGOUT",
+          userId,
+          sessionId: revoked[0] ?? null,
+          ip: context.ip,
+          userAgent: context.userAgent,
+          metadata: { revoked_sessions: revoked.length },
+        },
+        tx,
+      );
     });
+
     res.status(200).json({ message: "Logged out successfully" });
   } catch (error) {
     next(error);

@@ -2,13 +2,13 @@
   "name": "frontend",
   "private": true,
   "version": "0.0.0",
-  "packageManager": "yarn@1.22.22",
+  "packageManager": "bun@1.3.14",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "preview": "vite preview"
+    "dev": "bunx --bun vite",
+    "build": "bunx --bun tsc -b && bunx --bun vite build",
+    "lint": "bunx --bun eslint .",
+    "preview": "bunx --bun vite preview"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",

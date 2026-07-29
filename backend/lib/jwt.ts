@@ -36,6 +36,20 @@ export const generateTokens = ({
   };
 };
 
+export const parseRefreshToken = (token: string): RefreshToken | null => {
+  const [selector, verifier, ...rest] = token.split(".");
+
+  if (!selector || !verifier || rest.length > 0) {
+    return null;
+  }
+
+  return {
+    selector,
+    verifier,
+    token,
+  };
+};
+
 export const verifyAccessToken = (token: string) => {
   try {
     const payload = jwt.verify(token, JWT_SECRET) as {

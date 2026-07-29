@@ -7,7 +7,7 @@ export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
-    seed: "yarn seed",
+    seed: "bun run seed",
   },
   datasource: {
     url: process.env["DATABASE_URL"],

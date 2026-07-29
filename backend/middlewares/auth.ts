@@ -1,25 +1,20 @@
 import { type RequestHandler } from "express";
 import { verifyAccessToken } from "../lib/jwt";
+import { appError } from "../utils/errors";
 
-export const requireAuth: RequestHandler = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.split(" ")[1];
+export const requireAuth: RequestHandler = (req, _res, next) => {
+  const [scheme, token] = req.headers.authorization?.split(" ") ?? [];
 
-  if (!token) {
-    res.status(401).json({ error: "No token provided" });
-
-    return;
+  if (scheme?.toLowerCase() !== "bearer" || !token) {
+    return next(appError(401, "No token provided", "token_missing"));
   }
 
   const payload = verifyAccessToken(token);
 
   if (!payload) {
-    res.status(401).json({ error: "Invalid or expired token" });
-
-    return;
+    return next(appError(401, "Invalid or expired token", "token_invalid"));
   }
 
-  // Attach to request for downstream use (type-safe)
   req.userId = payload.userId;
   next();
 };

@@ -1,0 +1,287 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { api, resetDatabase, startTestServer, stopTestServer } from "./helpers/api";
+import { prisma } from "../lib/prisma";
+import { createMemoryMailer, setMailer } from "../lib/mail";
+
+const credentials = {
+  email: "recovery@example.com",
+  username: "recovery",
+  password: "correct-horse-battery",
+};
+
+const mailer = createMemoryMailer();
+
+function tokenFromLastMail(to: string) {
+  const mail = mailer.lastTo(to);
+  const match = mail?.text.match(/token=(\S+)/);
+
+  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+}
+
+function registerUser() {
+  return api("POST", "/register", { body: credentials });
+}
+
+beforeAll(async () => {
+  setMailer(mailer);
+  await startTestServer();
+});
+
+afterAll(async () => {
+  // A fresh in-memory transport, not the console one: other suites share this
+  // process and would otherwise start printing their mail.
+  setMailer(createMemoryMailer());
+  await stopTestServer();
+});
+
+beforeEach(async () => {
+  await resetDatabase();
+  mailer.clear();
+});
+
+describe("email verification", () => {
+  it("sends a confirmation link on registration", async () => {
+    await registerUser();
+
+    const mail = mailer.lastTo(credentials.email);
+
+    expect(mail?.subject).toBe("Confirm your email address");
+    expect(tokenFromLastMail(credentials.email)).toBeString();
+  });
+
+  it("confirms the address and burns the token", async () => {
+    await registerUser();
+    const token = tokenFromLastMail(credentials.email)!;
+
+    const confirmed = await api("POST", "/verify-email", { body: { token } });
+    expect(confirmed.status).toBe(200);
+
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { email: credentials.email },
+    });
+    expect(user.email_verified).toBe(true);
+
+    const replay = await api("POST", "/verify-email", { body: { token } });
+    expect(replay.status).toBe(400);
+    expect(replay.body.error.code).toBe("token_invalid");
+  });
+
+  it("rejects an unknown token", async () => {
+    const response = await api("POST", "/verify-email", {
+      body: { token: "definitely-not-a-real-token" },
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("token_invalid");
+  });
+
+  it("answers identically for an unregistered address and sends nothing", async () => {
+    const response = await api("POST", "/send-verification-email", {
+      body: { email: "nobody@example.com" },
+    });
+
+    expect(response.status).toBe(202);
+    expect(mailer.sent).toHaveLength(0);
+  });
+
+  it("retires the previous link when a new one is requested", async () => {
+    await registerUser();
+    const first = tokenFromLastMail(credentials.email)!;
+
+    await api("POST", "/send-verification-email", {
+      body: { email: credentials.email },
+    });
+    const second = tokenFromLastMail(credentials.email)!;
+
+    expect(second).not.toBe(first);
+
+    const stale = await api("POST", "/verify-email", { body: { token: first } });
+    expect(stale.status).toBe(400);
+
+    const current = await api("POST", "/verify-email", {
+      body: { token: second },
+    });
+    expect(current.status).toBe(200);
+  });
+});
+
+describe("password reset", () => {
+  const newPassword = "an-entirely-different-secret";
+
+  async function requestReset() {
+    await registerUser();
+    mailer.clear();
+
+    await api("POST", "/forgot-password", {
+      body: { email: credentials.email },
+    });
+
+    return tokenFromLastMail(credentials.email)!;
+  }
+
+  it("emails a reset link for a credential account", async () => {
+    const token = await requestReset();
+
+    expect(mailer.lastTo(credentials.email)?.subject).toBe(
+      "Reset your password",
+    );
+    expect(token).toBeString();
+  });
+
+  it("answers identically for an unregistered address", async () => {
+    const response = await api("POST", "/forgot-password", {
+      body: { email: "nobody@example.com" },
+    });
+
+    expect(response.status).toBe(202);
+    expect(mailer.sent).toHaveLength(0);
+  });
+
+  it("replaces the password and lets the user sign in with it", async () => {
+    const token = await requestReset();
+
+    const reset = await api("POST", "/reset-password", {
+      body: { token, password: newPassword },
+    });
+    expect(reset.status).toBe(200);
+
+    const withOld = await api("POST", "/login", {
+      body: { email: credentials.email, password: credentials.password },
+    });
+    expect(withOld.status).toBe(401);
+
+    const withNew = await api("POST", "/login", {
+      body: { email: credentials.email, password: newPassword },
+    });
+    expect(withNew.status).toBe(200);
+  });
+
+  it("revokes every existing session", async () => {
+    const registered = await registerUser();
+    mailer.clear();
+    await api("POST", "/forgot-password", {
+      body: { email: credentials.email },
+    });
+    const token = tokenFromLastMail(credentials.email)!;
+
+    await api("POST", "/reset-password", {
+      body: { token, password: newPassword },
+    });
+
+    const refreshed = await api("POST", "/refresh", {
+      body: { refreshToken: registered.body.refreshToken },
+    });
+    expect(refreshed.status).toBe(401);
+
+    const sessions = await prisma.session.findMany();
+    expect(sessions.every((session) => session.status === "REVOKED")).toBe(true);
+    expect(sessions[0]!.revoked_reason).toBe("password_reset");
+  });
+
+  it("treats a completed reset as proof of mailbox control", async () => {
+    const token = await requestReset();
+
+    await api("POST", "/reset-password", {
+      body: { token, password: newPassword },
+    });
+
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { email: credentials.email },
+    });
+    expect(user.email_verified).toBe(true);
+  });
+
+  it("is single use", async () => {
+    const token = await requestReset();
+
+    await api("POST", "/reset-password", {
+      body: { token, password: newPassword },
+    });
+
+    const replay = await api("POST", "/reset-password", {
+      body: { token, password: "yet-another-secret-value" },
+    });
+    expect(replay.status).toBe(400);
+    expect(replay.body.error.code).toBe("token_invalid");
+  });
+
+  it("records the reset in the audit log", async () => {
+    const token = await requestReset();
+
+    await api("POST", "/reset-password", {
+      body: { token, password: newPassword },
+    });
+
+    const events = await prisma.securityEvent.findMany({
+      where: {
+        event_type: { in: ["PASSWORD_RESET_REQUESTED", "PASSWORD_RESET_COMPLETED"] },
+      },
+    });
+
+    expect(events).toHaveLength(2);
+  });
+});
+
+describe("password change", () => {
+  const newPassword = "a-freshly-chosen-secret";
+
+  it("requires the current password", async () => {
+    const registered = await registerUser();
+
+    const response = await api("POST", "/change-password", {
+      accessToken: registered.body.accessToken,
+      body: { currentPassword: "not-the-right-one", newPassword },
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("auth_failed");
+  });
+
+  it("requires authentication", async () => {
+    const response = await api("POST", "/change-password", {
+      body: { currentPassword: credentials.password, newPassword },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("replaces the password and revokes existing sessions", async () => {
+    const registered = await registerUser();
+
+    const response = await api("POST", "/change-password", {
+      accessToken: registered.body.accessToken,
+      body: { currentPassword: credentials.password, newPassword },
+    });
+    expect(response.status).toBe(200);
+
+    const refreshed = await api("POST", "/refresh", {
+      body: { refreshToken: registered.body.refreshToken },
+    });
+    expect(refreshed.status).toBe(401);
+
+    const withNew = await api("POST", "/login", {
+      body: { email: credentials.email, password: newPassword },
+    });
+    expect(withNew.status).toBe(200);
+
+    const changed = await prisma.securityEvent.findFirst({
+      where: { event_type: "PASSWORD_CHANGED" },
+    });
+    expect(changed).not.toBeNull();
+  });
+
+  it("rejects a password past the bcrypt input limit", async () => {
+    const registered = await registerUser();
+
+    const response = await api("POST", "/change-password", {
+      accessToken: registered.body.accessToken,
+      body: {
+        currentPassword: credentials.password,
+        newPassword: "x".repeat(73),
+      },
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("validation");
+  });
+});

@@ -3,6 +3,7 @@ import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcrypt";
 import { Role } from "../generated/prisma/client";
+import { CREDENTIAL_PROVIDER } from "../constants/providers";
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
@@ -32,25 +33,35 @@ async function main() {
     },
   ] as const;
 
-  for (const user of demoUsers) {
-    const passwordHash = await bcrypt.hash(user.password, 10);
+  for (const demo of demoUsers) {
+    const passwordHash = await bcrypt.hash(demo.password, 10);
+    const profile = {
+      username: demo.username,
+      first_name: demo.first_name,
+      last_name: demo.last_name,
+      role: demo.role,
+      email_verified: true,
+    };
 
-    await prisma.user.upsert({
-      where: { email: user.email },
-      update: {
-        username: user.username,
-        password: passwordHash,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        role: user.role,
+    const user = await prisma.user.upsert({
+      where: { email: demo.email },
+      update: profile,
+      create: { email: demo.email, ...profile },
+    });
+
+    await prisma.account.upsert({
+      where: {
+        user_id_provider_id: {
+          user_id: user.id,
+          provider_id: CREDENTIAL_PROVIDER,
+        },
       },
+      update: { password: passwordHash },
       create: {
-        email: user.email,
-        username: user.username,
+        user_id: user.id,
+        provider_id: CREDENTIAL_PROVIDER,
+        account_id: user.id,
         password: passwordHash,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        role: user.role,
       },
     });
   }

@@ -9,14 +9,24 @@ datasource db {
 
 model User {
 
-  id         String  @id @default(uuid()) @db.Uuid
-  email      String  @unique
-  username   String  @unique
-  password   String
+  id    String @id @default(uuid()) @db.Uuid
+  email String @unique
+
+  /**
+   * Optional because social signups have no username until the user picks one.
+   * Postgres allows many NULLs under a unique index, so uniqueness still holds
+   * for the users who do have one.
+   */
+  username String? @unique
+
+  email_verified Boolean @default(false)
+
   first_name String?
   last_name  String?
+  image      String?
   role       Role    @default(USER)
 
+  accounts       Account[]
   sessions       Session[]
   recoveryTokens RecoveryToken[]
   securityEvents SecurityEvent[]
@@ -25,8 +35,51 @@ model User {
   updated_at    DateTime       @updatedAt
   refreshTokens RefreshToken[]
 
-  @@index([email, username])
   @@map("users")
+}
+
+/**
+ * One row per way a user can authenticate. The credential provider stores the
+ * password hash; every OAuth provider stores its own subject id and tokens.
+ * Keeping them in one table is what lets a user link Google to an account they
+ * originally created with a password.
+ */
+model Account {
+
+  id String @id @default(uuid()) @db.Uuid
+
+  user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user_id String @db.Uuid
+
+  /**
+   * "credential" for email+password, otherwise the provider key ("google").
+   */
+  provider_id String
+
+  /**
+   * The provider's stable subject identifier. For the credential provider this
+   * is the kauth user id, which keeps the composite unique key meaningful.
+   */
+  account_id String
+
+  /**
+   * Credential provider only. Never populated for OAuth accounts.
+   */
+  password String?
+
+  access_token            String?
+  refresh_token           String?
+  id_token                String?
+  access_token_expires_at DateTime?
+  scope                   String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@unique([provider_id, account_id])
+  @@unique([user_id, provider_id])
+  @@index([user_id])
+  @@map("accounts")
 }
 
 model Session {
@@ -232,6 +285,13 @@ enum Role {
 enum TokenType {
   EMAIL_CONFIRMATION
   PASSWORD_RESET
+
+  /**
+   * Handed to the browser after an OAuth callback and exchanged for a token
+   * pair. Very short lived: it exists only to carry the result of a redirect
+   * back to the frontend without putting session tokens in a URL.
+   */
+  OAUTH_EXCHANGE
 }
 
 enum SessionStatus {
@@ -256,6 +316,7 @@ enum DeviceType {
 }
 
 enum SecurityEventType {
+  USER_REGISTERED
   LOGIN_SUCCESS
   LOGIN_FAILED
   LOGOUT
@@ -268,6 +329,10 @@ enum SecurityEventType {
   PASSWORD_RESET_COMPLETED
   EMAIL_CONFIRMATION_SENT
   EMAIL_CONFIRMED
+  OAUTH_LOGIN_SUCCESS
+  OAUTH_LOGIN_FAILED
+  OAUTH_ACCOUNT_LINKED
+  CSRF_VALIDATION_FAILED
   SUSPICIOUS_ACTIVITY
 }
 

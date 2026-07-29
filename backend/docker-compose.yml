@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,9 +31,11 @@ services:
     environment:
       PORT: "6767"
       NODE_ENV: "development"
-      DATABASE_URL: "postgresql://postgres:${DB_PASSWORD:-password}@db:5432/kauth?sch\
+      DATABASE_URL:
+        "postgresql://postgres:${DB_PASSWORD:-password}@db:5432/kauth?sch\
         ema=public"
       JWT_SECRET: ${JWT_SECRET:-dev-secret}
+      COOKIE_SECRET: ${COOKIE_SECRET:-dev-cookie-secret}
     volumes:
       - ./:/app # Mount source for local development
       - /app/node_modules # Prevent host node_modules override

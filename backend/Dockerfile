@@ -1,19 +1,17 @@
-FROM node:22-bookworm-slim
+FROM oven/bun:1.3.14
 
 WORKDIR /app
 
-RUN corepack enable && corepack prepare yarn@1.22.22 --activate
-
 # Copy dependency manifests first for layer caching
-COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 
 # Copy source + config
 COPY . .
 
 # Generate Prisma client
-RUN yarn run prisma:generate
+RUN bun run prisma:generate
 
 EXPOSE 6767
 
-CMD ["yarn", "start"]
+CMD ["bun", "run", "start"]

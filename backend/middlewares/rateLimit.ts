@@ -1,0 +1,111 @@
+import { ipKeyGenerator, rateLimit, type Options } from "express-rate-limit";
+import { type Request } from "express";
+import { appError } from "../utils/errors";
+import config from "../config";
+
+const MINUTE = 60 * 1000;
+const UNKNOWN_IP = "unknown";
+
+/**
+ * Integration suites hammer the same endpoints repeatedly, so limits are off
+ * under NODE_ENV=test by default. The rate-limit tests themselves flip this
+ * back on for the duration of their assertions.
+ */
+let enabled = config.node_env !== "test";
+
+export function setRateLimitingEnabled(value: boolean) {
+  enabled = value;
+}
+
+/**
+ * express-rate-limit inspects the key generator's source text to catch IPv6
+ * bypasses, so any generator touching req.ip must call ipKeyGenerator in its
+ * own body rather than delegating to a helper.
+ */
+const byIp = (req: Request) => ipKeyGenerator(req.ip ?? UNKNOWN_IP);
+
+/**
+ * Keys on the submitted email so a distributed attacker cannot spread a
+ * password-guessing run for one account across many source addresses.
+ */
+const byAccount = (req: Request) => {
+  const email: unknown = req.body?.email;
+
+  if (typeof email !== "string" || email.trim().length === 0) {
+    return `ip:${ipKeyGenerator(req.ip ?? UNKNOWN_IP)}`;
+  }
+
+  return `account:${email.trim().toLowerCase()}`;
+};
+
+/**
+ * The default memory store is per-process. Once kauth runs more than one
+ * instance these limits become per-instance and must move to a shared store.
+ */
+function limiter(options: Partial<Options>) {
+  return rateLimit({
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    skip: () => !enabled,
+    handler: (_req, _res, next) =>
+      next(appError(429, "Too many requests", "rate_limited")),
+    ...options,
+  });
+}
+
+export const globalLimiter = limiter({
+  windowMs: 15 * MINUTE,
+  limit: 300,
+  keyGenerator: byIp,
+});
+
+export const loginIpLimiter = limiter({
+  windowMs: 15 * MINUTE,
+  limit: 30,
+  keyGenerator: byIp,
+});
+
+export const loginAccountLimiter = limiter({
+  windowMs: 15 * MINUTE,
+  limit: 8,
+  skipSuccessfulRequests: true,
+  keyGenerator: byAccount,
+});
+
+export const registerLimiter = limiter({
+  windowMs: 60 * MINUTE,
+  limit: 10,
+  keyGenerator: byIp,
+});
+
+export const refreshLimiter = limiter({
+  windowMs: 15 * MINUTE,
+  limit: 60,
+  keyGenerator: byIp,
+});
+
+/**
+ * Recovery flows send email, so the per-account limit is the one that matters:
+ * without it an attacker can mailbomb a known address from many sources.
+ */
+export const recoveryLimiter = limiter({
+  windowMs: 60 * MINUTE,
+  limit: 5,
+  keyGenerator: byAccount,
+});
+
+/**
+ * Guessing a 256-bit recovery token is not the threat here; this just stops a
+ * client from hammering the endpoint.
+ */
+export const tokenSubmissionLimiter = limiter({
+  windowMs: 15 * MINUTE,
+  limit: 20,
+  keyGenerator: byIp,
+});
+
+export const oauthLimiter = limiter({
+  windowMs: 15 * MINUTE,
+  limit: 40,
+  keyGenerator: byIp,
+});
