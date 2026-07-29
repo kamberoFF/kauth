@@ -22,6 +22,7 @@ import {
   tryRecordSecurityEvent,
 } from "../lib/securityEvents";
 import { oauthExchangeSchema } from "../lib/validation";
+import { sendAuthResponse } from "../lib/tokenTransport";
 
 const STATE_COOKIE = "kauth_oauth_state";
 const VERIFIER_COOKIE = "kauth_oauth_verifier";
@@ -313,10 +314,15 @@ export const exchangeOAuthCode: RequestHandler = async (req, res, next) => {
       return created;
     });
 
-    res.json({
-      accessToken: result.accessToken.token,
-      refreshToken: result.refreshToken.token,
-    });
+    sendAuthResponse(
+      req,
+      res,
+      {
+        accessToken: result.accessToken.token,
+        refreshToken: result.refreshToken.token,
+      },
+      {},
+    );
   } catch (error) {
     next(error);
   }

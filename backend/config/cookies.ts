@@ -1,7 +1,22 @@
 import type { CookieOptions } from "express";
 import config from "../config";
+import { ACCESS_TOKEN_TTL_MS } from "../lib/jwt";
 
 const isProd = config.node_env === "production";
+
+/**
+ * SameSite "lax" is enough while the frontend and the API are same-site
+ * (`localhost:5173` → `localhost:6767`, or `app.example.com` → `api.example.com`).
+ * A frontend on a different registrable domain would need `SameSite=None` plus
+ * `Secure`; that deployment shape does not exist yet, so it is not configurable.
+ */
+export const accessCookieOptions: CookieOptions = {
+  httpOnly: true,
+  secure: isProd,
+  sameSite: "lax",
+  path: "/",
+  maxAge: ACCESS_TOKEN_TTL_MS,
+};
 
 export const refreshCookieOptions: CookieOptions = {
   httpOnly: true,

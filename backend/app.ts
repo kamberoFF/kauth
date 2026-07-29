@@ -11,7 +11,11 @@ import { errorHandler, notFoundHandler } from "./middlewares/error";
 import { globalLimiter } from "./middlewares/rateLimit";
 import { requireTrustedOrigin } from "./middlewares/origin";
 import { issueCsrfToken, requireCsrfToken } from "./middlewares/csrf";
-import { CSRF_TOKEN_HEADER, DEVICE_ID_HEADER } from "./constants/headers";
+import {
+  CSRF_TOKEN_HEADER,
+  DEVICE_ID_HEADER,
+  TOKEN_RESPONSE_HEADER,
+} from "./constants/headers";
 
 const app = express();
 
@@ -47,6 +51,7 @@ app.use(
       "Authorization",
       CSRF_TOKEN_HEADER,
       DEVICE_ID_HEADER,
+      TOKEN_RESPONSE_HEADER,
     ],
   }),
 );

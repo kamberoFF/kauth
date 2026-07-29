@@ -47,12 +47,20 @@ export async function createSession(
   context: ClientContext,
 ) {
   const familyId = crypto.randomUUID();
-  const { accessToken, refreshToken } = generateTokens({ userId, familyId });
+  // The id is allocated up front because the access token has to carry it, and
+  // the token is minted before the row exists.
+  const sessionId = crypto.randomUUID();
+  const { accessToken, refreshToken } = generateTokens({
+    userId,
+    familyId,
+    sessionId,
+  });
   const now = new Date();
   const expiresAt = sessionExpiry();
 
   const session = await tx.session.create({
     data: {
+      id: sessionId,
       user_id: userId,
       device_id: context.deviceId,
       expires_at: expiresAt,

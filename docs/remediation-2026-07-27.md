@@ -142,14 +142,18 @@ These were necessary to make the requested work correct, not separate features.
 Deliberately not addressed. Finding 3 was excluded from this pass; the rest come
 from the audit's other sections.
 
+> **Closed since.** Access-token revocation and cookie transport landed on
+> 2026-07-29 — see [remediation-2026-07-29.md](./remediation-2026-07-29.md) for
+> the current open list. The two rows below are kept for the record.
+
 | Gap | Audit ref | Why it matters |
 | --- | --- | --- |
-| **Access tokens survive logout** for up to 15 min | §4.2 | `requireAuth` still never loads the session. Revocation is a no-op against a live access token. The single largest remaining hole. |
+| ~~**Access tokens survive logout** for up to 15 min~~ | §4.2 | Closed 2026-07-29. |
 | bcrypt cost 10, not Argon2id | §4.3 | Benchmark to 250–400 ms; migrate with rehash-on-login. |
 | No breach check, 8-char minimum | §4.3 | NIST-4 wants 15 for single-factor plus an HIBP blocklist check. |
 | Registration enumeration, login timing oracle | §4.3 | 409 on duplicate email is still an oracle; login still short-circuits before hashing. |
 | `device_id` still client-supplied | §4.2 | Should be server-issued and treated as a risk signal, not an auth decision. |
-| No cookie transport for sessions | §4.2 | Tokens are still JSON-body only, so browser clients will reach for `localStorage`. |
+| ~~No cookie transport for sessions~~ | §4.2 | Closed 2026-07-29. |
 | No sliding expiry or inactivity timeout | §4.2 | `last_used_at` is written but never read for policy. |
 | No MFA, no passkeys | §4.5 | |
 | No multi-tenancy, RBAC unenforced | §4.5 | `Role` exists on the user and appears in no token. |
@@ -164,3 +168,5 @@ Close the access-token revocation gap (§4.2). Embed `sessionId` in the access
 token and check session status in `requireAuth`. Every revocation path built in
 this pass — logout, password change, password reset, reuse detection — is
 currently undermined by that 15-minute window.
+
+> Done on 2026-07-29, along with cookie transport.

@@ -20,11 +20,13 @@ export const loginSchema = z.object({
   password: z.string().min(8),
 });
 
-export const refreshSchema = z.object({
-  refreshToken: z
-    .string()
-    .regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/, "Invalid refresh token format"),
-});
+/**
+ * Validates the token value itself rather than a body field, because it may
+ * arrive either in the JSON body or in the refresh cookie.
+ */
+export const refreshTokenSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/, "Invalid refresh token format");
 
 export const emailSchema = z.object({
   email: z.email(),

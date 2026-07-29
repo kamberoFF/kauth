@@ -39,6 +39,25 @@ All state-changing routes require a trusted `Origin` (or no origin at all, for
 non-browser clients). Requests that carry cookies must also send a matching
 `X-CSRF-Token`.
 
+### Token transport
+
+Every endpoint that issues a session sets two `HttpOnly` cookies —
+`kauth_session` (the access token, path `/`) and `kauth_refresh` (path
+`/refresh`). The tokens appear in the JSON body **only** when the request sends
+`X-Token-Response: body`.
+
+Cookies are the default so a browser has no reason to hold a token in
+JavaScript, where any XSS can read it. Native and server-to-server clients opt
+into body tokens and send `Authorization: Bearer …` as before; when both a
+bearer header and a session cookie are present, the header wins.
+
+A browser client must therefore `GET /csrf-token` before its first unsafe
+request, because once cookies are set the double-submit check is live.
+
+`SameSite=Lax` assumes the frontend and the API are same-site — `localhost:5173`
+→ `localhost:6767`, or `app.example.com` → `api.example.com`. A frontend on a
+different registrable domain would need `SameSite=None; Secure`.
+
 ### Credentials
 
 | Method | Path | Notes |
@@ -86,6 +105,16 @@ Every failure returns the same shape:
 ```json
 { "error": { "message": "Invalid credentials", "code": "auth_failed" } }
 ```
+
+An access token is checked against its session on every request, so `requireAuth`
+distinguishes a token problem from a session problem:
+
+| Code | Meaning |
+| ---- | ------- |
+| `token_missing` | No bearer header and no session cookie. |
+| `token_invalid` | Bad signature, expired JWT, no `sid` claim, or a session that no longer exists. |
+| `session_revoked` | The session was revoked — logout, re-login, password change or reset, or reuse detection. |
+| `session_expired` | The session outlived its 30-day window. |
 
 ## Account linking
 

@@ -3,15 +3,20 @@ import crypto from "node:crypto";
 import config from "../config";
 import type {
   AccessToken,
+  AccessTokenPayload,
   GenerateTokensParams,
   RefreshToken,
 } from "../types/jwt";
 
 const JWT_SECRET = config.jwt_secret;
+const JWT_ALGORITHM = "HS256";
+
+export const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 
 export const generateTokens = ({
   userId,
   familyId,
+  sessionId,
 }: GenerateTokensParams): {
   familyId: string;
   accessToken: AccessToken;
@@ -19,9 +24,10 @@ export const generateTokens = ({
 } => {
   const jwtid = crypto.randomUUID();
 
-  const accessToken = jwt.sign({ userId, familyId }, JWT_SECRET, {
+  const accessToken = jwt.sign({ userId, familyId, sid: sessionId }, JWT_SECRET, {
+    algorithm: JWT_ALGORITHM,
     jwtid,
-    expiresIn: "15m",
+    expiresIn: ACCESS_TOKEN_TTL_MS / 1000,
   });
 
   const selector = crypto.randomBytes(16).toString("base64url");
@@ -31,7 +37,7 @@ export const generateTokens = ({
 
   return {
     familyId,
-    accessToken: { userId, jti: jwtid, token: accessToken },
+    accessToken: { userId, sessionId, jti: jwtid, token: accessToken },
     refreshToken: { selector, verifier, token: refreshToken },
   };
 };
@@ -50,15 +56,24 @@ export const parseRefreshToken = (token: string): RefreshToken | null => {
   };
 };
 
-export const verifyAccessToken = (token: string) => {
+/**
+ * The algorithm is pinned rather than taken from the token header, so a token
+ * claiming `alg: none` cannot walk straight past verification.
+ *
+ * A payload without `sid` predates session-bound access tokens and is refused:
+ * it cannot be checked against a session, which is the whole point of the claim.
+ */
+export const verifyAccessToken = (token: string): AccessTokenPayload | null => {
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as {
-      jti: string;
-      familyId: string;
-      userId: string;
-    };
+    const payload = jwt.verify(token, JWT_SECRET, {
+      algorithms: [JWT_ALGORITHM],
+    }) as Partial<AccessTokenPayload>;
 
-    return payload;
+    if (!payload.sid || !payload.userId || !payload.familyId || !payload.jti) {
+      return null;
+    }
+
+    return payload as AccessTokenPayload;
   } catch {
     return null;
   }

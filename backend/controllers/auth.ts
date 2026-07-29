@@ -3,7 +3,11 @@ import { type RequestHandler } from "express";
 import bcrypt from "bcrypt";
 import { generateTokens, parseRefreshToken } from "../lib/jwt";
 import { prisma } from "../lib/prisma";
-import { registerSchema, loginSchema, refreshSchema } from "../lib/validation";
+import {
+  registerSchema,
+  loginSchema,
+  refreshTokenSchema,
+} from "../lib/validation";
 import { appError } from "../utils/errors";
 import { requireDeviceId, requireUserId } from "../utils/requestGuards";
 import { CREDENTIAL_PROVIDER } from "../constants/providers";
@@ -20,6 +24,11 @@ import {
   recordSecurityEvent,
   tryRecordSecurityEvent,
 } from "../lib/securityEvents";
+import {
+  clearAuthCookies,
+  readRefreshCookie,
+  sendAuthResponse,
+} from "../lib/tokenTransport";
 
 const PASSWORD_HASH_ROUNDS = 10;
 const REFRESH_HASH_ROUNDS = 10;
@@ -93,18 +102,25 @@ export const register: RequestHandler = async (req, res, next) => {
       userAgent: context.userAgent,
     });
 
-    res.status(201).json({
-      user: {
-        id: result.user.id,
-        username: result.user.username,
-        email: result.user.email,
-        emailVerified: result.user.email_verified,
-        firstName: result.user.first_name,
-        lastName: result.user.last_name,
+    sendAuthResponse(
+      req,
+      res,
+      {
+        accessToken: result.accessToken.token,
+        refreshToken: result.refreshToken.token,
       },
-      accessToken: result.accessToken.token,
-      refreshToken: result.refreshToken.token,
-    });
+      {
+        user: {
+          id: result.user.id,
+          username: result.user.username,
+          email: result.user.email,
+          emailVerified: result.user.email_verified,
+          firstName: result.user.first_name,
+          lastName: result.user.last_name,
+        },
+      },
+      201,
+    );
   } catch (error) {
     next(error);
   }
@@ -190,10 +206,15 @@ export const login: RequestHandler = async (req, res, next) => {
       return created;
     });
 
-    res.json({
-      accessToken: result.accessToken.token,
-      refreshToken: result.refreshToken.token,
-    });
+    sendAuthResponse(
+      req,
+      res,
+      {
+        accessToken: result.accessToken.token,
+        refreshToken: result.refreshToken.token,
+      },
+      {},
+    );
   } catch (error) {
     next(error);
   }
@@ -201,12 +222,17 @@ export const login: RequestHandler = async (req, res, next) => {
 
 export const refresh: RequestHandler = async (req, res, next) => {
   try {
-    const parsed = refreshSchema.safeParse(req.body);
+    // A cookie client sends nothing in the body; a bearer client sends no cookie.
+    const supplied =
+      (req.body as { refreshToken?: unknown } | undefined)?.refreshToken ??
+      readRefreshCookie(req);
+
+    const parsed = refreshTokenSchema.safeParse(supplied);
     if (!parsed.success)
       return next(appError(400, "Invalid input", "validation"));
 
     const context = clientContext(req, requireDeviceId(req));
-    const presented = parseRefreshToken(parsed.data.refreshToken);
+    const presented = parseRefreshToken(parsed.data);
 
     if (!presented) {
       return next(appError(401, "Invalid refresh token", "token_invalid"));
@@ -319,6 +345,7 @@ export const refresh: RequestHandler = async (req, res, next) => {
     const { accessToken, refreshToken } = generateTokens({
       userId: storedToken.user_id,
       familyId: storedToken.family_id,
+      sessionId: storedToken.session_id,
     });
 
     // The replacement dies with its session rather than outliving it, so the
@@ -375,10 +402,12 @@ export const refresh: RequestHandler = async (req, res, next) => {
       );
     });
 
-    res.json({
-      accessToken: accessToken.token,
-      refreshToken: refreshToken.token,
-    });
+    sendAuthResponse(
+      req,
+      res,
+      { accessToken: accessToken.token, refreshToken: refreshToken.token },
+      {},
+    );
   } catch (error) {
     next(error);
   }
@@ -408,6 +437,8 @@ export const logout: RequestHandler = async (req, res, next) => {
         tx,
       );
     });
+
+    clearAuthCookies(res);
 
     res.status(200).json({ message: "Logged out successfully" });
   } catch (error) {
