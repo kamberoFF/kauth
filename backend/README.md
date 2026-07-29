@@ -159,5 +159,6 @@ setMailer({ async send(mail) { /* … */ } });
 
 ## Documentation
 
-- [Audit](../docs/audit-2026-07-27.md) — current state, gaps, and what is still missing.
-- [Hardening roadmap](docs/README.md) — the original phased plan.
+- [Roadmap](../docs/roadmap.md) — what is done, what is next. Living document.
+- [Docs index](../docs/README.md) — the audit and remediation history.
+- [Project README](../README.md) — what kauth is and how the auth model works.

@@ -1,73 +1,34 @@
-# React + TypeScript + Vite
+# kauth frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A scaffold. `src/App.tsx` is a placeholder — there is no auth client yet.
 
-Currently, two official plugins are available:
+Vite + React 19 + TypeScript + Tailwind 4, with shadcn/ui configured
+(`components.json`) but no components generated.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+bun install
+bun run dev      # http://localhost:5173
+bun run lint
+bun run build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## What it needs to become
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+The backend contract it will consume is documented in
+[../backend/README.md](../backend/README.md). The parts that matter for a
+browser client:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- **Cookies are the default transport.** Do not send `X-Token-Response: body`,
+  and do not store tokens in `localStorage` — the backend is built so a browser
+  never has to.
+- **`GET /csrf-token` before the first unsafe request**, then echo the value in
+  `X-CSRF-Token` on every `POST`. CSRF enforcement activates as soon as the
+  session cookies exist.
+- **Every auth request needs an `X-Device-Id` header** — a UUID the client
+  generates and persists. It scopes sessions and logout to one device.
+- **`/oauth/callback` needs a route.** The backend redirects the browser there
+  with `?code=…`, which the client `POST`s to `/oauth/exchange` along with its
+  device id to receive a session. `?error=…` arrives the same way on failure.
+- **On a 401 with code `session_revoked` or `session_expired`, send the user to
+  login** — refreshing will not help. `token_invalid` on an access token is
+  worth one `POST /refresh` before giving up.
