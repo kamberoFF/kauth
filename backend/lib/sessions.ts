@@ -17,7 +17,8 @@ export type RevocationReason =
   | "refresh_token_reuse_detected"
   | "password_changed"
   | "password_reset"
-  | "user_revoked";
+  | "user_revoked"
+  | "api_key_revoked";
 
 export interface ClientContext {
   deviceId: string;

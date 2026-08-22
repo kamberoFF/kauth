@@ -2,7 +2,7 @@ import { Router } from "express";
 import { register, login, refresh, logout } from "../controllers/auth";
 import { requireAuth } from "../middlewares/auth";
 import { requireDevice } from "../middlewares/device";
-import { requireProject } from "../middlewares/project";
+import { resolveProjectFromKeyOrHeader } from "../middlewares/apiKey";
 import {
   loginAccountLimiter,
   loginIpLimiter,
@@ -14,14 +14,14 @@ const router = Router();
 
 router.post(
   "/register",
-  requireProject,
+  resolveProjectFromKeyOrHeader,
   registerLimiter,
   requireDevice,
   register,
 );
 router.post(
   "/login",
-  requireProject,
+  resolveProjectFromKeyOrHeader,
   loginIpLimiter,
   loginAccountLimiter,
   requireDevice,

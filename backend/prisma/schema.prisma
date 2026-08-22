@@ -34,6 +34,7 @@ model Project {
   refreshTokens  RefreshToken[]
   recoveryTokens RecoveryToken[]
   securityEvents SecurityEvent[]
+  apiKeys        ApiKey[]
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
@@ -75,6 +76,13 @@ model User {
    * ticket 03 — always empty for ordinary end users.
    */
   ownedProjects Project[] @relation("ProjectOwner")
+
+  /**
+   * API keys this user has issued for a project they own. The key itself
+   * authorizes requests as the project, not as this specific developer —
+   * this relation exists for audit attribution only.
+   */
+  issuedApiKeys ApiKey[] @relation("ApiKeyIssuer")
 
   created_at    DateTime       @default(now())
   updated_at    DateTime       @updatedAt
@@ -314,6 +322,53 @@ model RecoveryToken {
   @@map("recovery_tokens")
 }
 
+model ApiKey {
+
+  id String @id @default(uuid()) @db.Uuid
+
+  project    Project @relation(fields: [project_id], references: [id], onDelete: Restrict)
+  project_id String  @db.Uuid
+
+  key_type ApiKeyType
+
+  /**
+   * SECRET: the plaintext lookup selector, paired with key_hash — the same
+   * selector/verifier split RefreshToken uses for O(1) lookup without a
+   * full-table hash scan. PUBLISHABLE: a display-truncated slice of
+   * key_value. Either way, a listing shows only this column, never
+   * key_value or key_hash.
+   */
+  key_prefix String @unique
+
+  /**
+   * Full plaintext value, PUBLISHABLE only. Safe to store and re-serve in
+   * full since these keys are meant to ship in a browser/mobile bundle.
+   */
+  key_value String? @unique
+
+  /**
+   * bcrypt hash of the verifier half, SECRET only. Shown once at creation,
+   * never reconstructable afterward.
+   */
+  key_hash String?
+
+  /**
+   * Audit attribution only — the key authorizes requests as the project,
+   * not as this user. Nullable so a departed developer's account can be
+   * removed without invalidating keys they issued.
+   */
+  created_by         User?   @relation("ApiKeyIssuer", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  created_by_user_id String? @db.Uuid
+
+  created_at   DateTime  @default(now())
+  last_used_at DateTime?
+  revoked_at   DateTime?
+
+  @@index([project_id])
+  @@index([created_by_user_id])
+  @@map("api_keys")
+}
+
 model SecurityEvent {
 
   id String @id @default(uuid()) @db.Uuid
@@ -383,6 +438,11 @@ enum DeviceType {
   UNKNOWN
 }
 
+enum ApiKeyType {
+  PUBLISHABLE
+  SECRET
+}
+
 enum SecurityEventType {
   USER_REGISTERED
   LOGIN_SUCCESS
@@ -403,6 +463,8 @@ enum SecurityEventType {
   ACCOUNT_UNLINKED
   CSRF_VALIDATION_FAILED
   SUSPICIOUS_ACTIVITY
+  API_KEY_ISSUED
+  API_KEY_REVOKED
 }
 
 enum SecurityEventSeverity {

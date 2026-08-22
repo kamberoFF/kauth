@@ -9,6 +9,8 @@ declare global {
       deviceId?: string;
       projectId?: string;
       csrfToken?: string;
+      apiKeyId?: string;
+      apiKeyType?: "PUBLISHABLE" | "SECRET";
     }
   }
 }
