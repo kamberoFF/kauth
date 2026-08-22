@@ -2,8 +2,10 @@ import { Router } from "express";
 import {
   changePassword,
   forgotPassword,
+  listLinkedAccounts,
   resetPassword,
   sendVerificationEmail,
+  unlinkAccount,
   verifyEmail,
 } from "../controllers/account";
 import { requireAuth } from "../middlewares/auth";
@@ -27,5 +29,7 @@ router.post(
 );
 router.post("/reset-password", tokenSubmissionLimiter, resetPassword);
 router.post("/change-password", requireAuth, changePassword);
+router.get("/accounts", requireAuth, listLinkedAccounts);
+router.delete("/accounts/:providerId", requireAuth, unlinkAccount);
 
 export default router;

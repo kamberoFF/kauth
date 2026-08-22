@@ -6,6 +6,7 @@ import config from "./config";
 import authRoutes from "./routes/auth";
 import accountRoutes from "./routes/account";
 import oauthRoutes from "./routes/oauth";
+import sessionsRoutes from "./routes/sessions";
 import { requireAuth } from "./middlewares/auth";
 import { errorHandler, notFoundHandler } from "./middlewares/error";
 import { globalLimiter } from "./middlewares/rateLimit";
@@ -73,6 +74,7 @@ app.get("/csrf-token", (_req, res) => {
 app.use(authRoutes);
 app.use(accountRoutes);
 app.use(oauthRoutes);
+app.use(sessionsRoutes);
 
 app.get("/protected", requireAuth, (req, res) => {
   res.json({ message: "Authorized", userId: req.userId });

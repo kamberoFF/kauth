@@ -273,3 +273,91 @@ export const changePassword: RequestHandler = async (req, res, next) => {
     next(error);
   }
 };
+
+export const listLinkedAccounts: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = requireUserId(req);
+    const projectId = requireProjectId(req);
+
+    // project_id is redundant here — a User row is itself project-scoped by
+    // construction, so every Account hanging off it already belongs to the
+    // caller's own project — but included anyway for the same
+    // belt-and-suspenders reason requireAuth checks it explicitly too.
+    const accounts = await prisma.account.findMany({
+      where: { user_id: userId, project_id: projectId },
+      orderBy: { created_at: "asc" },
+      select: { id: true, provider_id: true, created_at: true, updated_at: true },
+    });
+
+    res.json({
+      accounts: accounts.map((account) => ({
+        id: account.id,
+        providerId: account.provider_id,
+        linkedAt: account.created_at,
+        updatedAt: account.updated_at,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const unlinkAccount: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = requireUserId(req);
+    const projectId = requireProjectId(req);
+    const providerId = req.params.providerId ?? "";
+    const context = requestContext(req);
+
+    await prisma.$transaction(async (tx) => {
+      // Locks every one of the caller's account rows before counting them.
+      // A plain count-then-delete would let two concurrent unlink requests
+      // (one per remaining provider) each read "2 remain" before either
+      // commits, and both would pass the guard below — this forces the
+      // second request to wait for the first to commit its delete, so it
+      // recounts against the post-delete state instead.
+      await tx.$queryRaw`SELECT id FROM "accounts" WHERE user_id = ${userId}::uuid FOR UPDATE`;
+
+      const target = await tx.account.findUnique({
+        where: { user_id_provider_id: { user_id: userId, provider_id: providerId } },
+      });
+
+      // Same belt-and-suspenders shape as revokeSession: user_id alone
+      // already implies the project, but checking project_id explicitly
+      // too costs nothing and keeps this endpoint consistent with how its
+      // sibling self-service endpoints scope ownership.
+      if (!target || target.project_id !== projectId) {
+        throw appError(404, "Linked account not found", "account_not_found");
+      }
+
+      const remaining = await tx.account.count({ where: { user_id: userId } });
+
+      // Removing this row must never leave the account with zero sign-in
+      // methods of any kind, credential or OAuth.
+      if (remaining <= 1) {
+        throw appError(
+          400,
+          "Cannot remove your only sign-in method",
+          "only_sign_in_method",
+        );
+      }
+
+      await tx.account.delete({ where: { id: target.id } });
+
+      await recordSecurityEvent(
+        {
+          type: "ACCOUNT_UNLINKED",
+          userId,
+          projectId: target.project_id,
+          ...context,
+          metadata: { provider: providerId },
+        },
+        tx,
+      );
+    });
+
+    res.json({ message: "Account unlinked" });
+  } catch (error) {
+    next(error);
+  }
+};
