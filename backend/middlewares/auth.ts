@@ -76,6 +76,7 @@ export const requireAuth: RequestHandler = async (req, _res, next) => {
 
     req.userId = session.user_id;
     req.sessionId = session.id;
+    req.projectId = session.project_id;
 
     next();
   } catch (error) {

@@ -42,6 +42,7 @@ export interface ApiResponse<T = any> {
 interface ApiOptions {
   body?: unknown;
   deviceId?: string | null;
+  projectId?: string;
   accessToken?: string;
   headers?: Record<string, string>;
   redirect?: "follow" | "manual" | "error";
@@ -62,6 +63,10 @@ export async function api<T = any>(
 
   if (options.deviceId !== null) {
     headers["x-device-id"] = options.deviceId ?? TEST_DEVICE_ID;
+  }
+
+  if (options.projectId) {
+    headers["x-project-id"] = options.projectId;
   }
 
   if (options.accessToken) {
@@ -185,11 +190,23 @@ export function cookieClient() {
 }
 
 /**
- * Truncating users cascades through every dependent table, which keeps this
- * from needing to know the full table list as the schema grows.
+ * Truncating projects cascades through every dependent table (users and
+ * everything users cascade to), which keeps this from needing to know the
+ * full table list as the schema grows. Truncating users alone would miss
+ * projects, since projects is upstream of users, not a dependent of it.
  */
 export async function resetDatabase() {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "users" RESTART IDENTITY CASCADE',
+    'TRUNCATE TABLE "projects" RESTART IDENTITY CASCADE',
   );
+}
+
+/**
+ * A project must be a real seeded row before anything can register into it,
+ * so unlike TEST_DEVICE_ID there's no fixed placeholder constant here.
+ */
+export async function createTestProject(overrides?: { name?: string }) {
+  return prisma.project.create({
+    data: { name: overrides?.name ?? "Test Project" },
+  });
 }

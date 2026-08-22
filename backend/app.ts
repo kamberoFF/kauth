@@ -14,6 +14,7 @@ import { issueCsrfToken, requireCsrfToken } from "./middlewares/csrf";
 import {
   CSRF_TOKEN_HEADER,
   DEVICE_ID_HEADER,
+  PROJECT_ID_HEADER,
   TOKEN_RESPONSE_HEADER,
 } from "./constants/headers";
 
@@ -51,6 +52,7 @@ app.use(
       "Authorization",
       CSRF_TOKEN_HEADER,
       DEVICE_ID_HEADER,
+      PROJECT_ID_HEADER,
       TOKEN_RESPONSE_HEADER,
     ],
   }),
