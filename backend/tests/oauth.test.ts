@@ -179,6 +179,32 @@ describe("callback", () => {
     expect(result.code).toBeNull();
   });
 
+  it("drops audit attribution for a malformed project cookie even when an earlier check fails first", async () => {
+    const { cookie } = await startFlow();
+    const tamperedCookie = cookie.replace(
+      `kauth_oauth_project=${project.id}`,
+      "kauth_oauth_project=not-a-uuid",
+    );
+
+    // state_mismatch fires before the project-check line in the function
+    // body, but project-id resolution now runs up front regardless of which
+    // check ends up failing.
+    const response = await api(
+      "GET",
+      `/oauth/${PROVIDER_ID}/callback?code=${VALID_CODE}&state=attacker-supplied-state`,
+      { redirect: "manual", headers: { cookie: tamperedCookie } },
+    );
+
+    const location = new URL(response.headers.get("location") ?? "");
+    expect(location.searchParams.get("error")).toBe("state_mismatch");
+
+    const event = await prisma.securityEvent.findFirstOrThrow({
+      where: { event_type: "OAUTH_LOGIN_FAILED" },
+    });
+    expect(event.project_id).toBeNull();
+    expect(event.metadata).toMatchObject({ reason: "state_mismatch" });
+  });
+
   it("rejects a callback with no state cookie at all", async () => {
     const response = await api(
       "GET",

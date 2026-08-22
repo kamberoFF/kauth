@@ -231,15 +231,22 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
   const codeVerifier = readAndClearCookie(req, res, VERIFIER_COOKIE);
   const projectId = readAndClearCookie(req, res, PROJECT_COOKIE);
 
-  // Starts as the raw cookie value (matching every failure reason that can
-  // fire before project-id resolution runs — state_mismatch, invalid_response,
-  // a provider-supplied req.query.error — which should still attribute to
-  // whatever project this flow named) and is only ever nulled out once
-  // resolution actively fails, never inferred from the failure reason string
-  // itself: project_id is a real FK, so a malformed or stale/deleted id would
-  // just fail the audit INSERT and be silently dropped by
-  // tryRecordSecurityEvent's catch.
-  let attributedProjectId: string | null = projectId ?? null;
+  // Resolved once, up front — before any of the checks below, so every
+  // fail() call attributes to a confirmed-valid project id or null, never to
+  // a raw cookie value that might be malformed or reference a since-deleted
+  // project. project_id is a real FK: handing it an invalid id would just
+  // fail the audit INSERT itself, silently dropped by
+  // tryRecordSecurityEvent's catch. The specific failure (if any) is kept
+  // too, so the "this flow can't proceed without a valid project" check
+  // further down still reports its precise reason rather than a generic one.
+  let attributedProjectId: string | null = null;
+  let projectResolutionError: unknown = null;
+
+  try {
+    attributedProjectId = await resolveProjectIdOrThrow(projectId, "project cookie");
+  } catch (error) {
+    projectResolutionError = error;
+  }
 
   async function fail(reason: string) {
     await tryRecordSecurityEvent({
@@ -274,17 +281,13 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
       return await fail("state_mismatch");
     }
 
-    // Re-validated rather than trusted on the cookie's mere presence (this
-    // also covers the cookie being absent entirely, folding what used to be
-    // a separate project_missing check into the same project_id_missing code
-    // requireProject/startOAuth already produce): the cookie was a real
-    // project id when startOAuth set it, but nothing stops the project it
-    // names from having been deleted in the meantime.
-    try {
-      attributedProjectId = await resolveProjectIdOrThrow(projectId, "project cookie");
-    } catch (error) {
-      attributedProjectId = null;
-      throw error;
+    // Re-validated rather than trusted on the cookie's mere presence: the
+    // cookie was a real project id when startOAuth set it, but nothing stops
+    // the project it names from having been deleted in the meantime. The
+    // resolution itself already ran, up front — this just surfaces whichever
+    // specific failure it produced (project_id_missing/_invalid/not_found).
+    if (projectResolutionError) {
+      throw projectResolutionError;
     }
 
     if (provider.usesPkce && !codeVerifier) {
@@ -296,8 +299,8 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
       codeVerifier ?? "",
     );
     const profile = await provider.fetchProfile(tokens);
-    // Non-null: only set to null in the catch above, which rethrows before
-    // reaching here.
+    // Non-null: the projectResolutionError check above returns/throws before
+    // reaching here otherwise.
     const user = await resolveUser(
       provider,
       profile,
