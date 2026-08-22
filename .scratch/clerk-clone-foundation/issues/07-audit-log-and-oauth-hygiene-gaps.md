@@ -79,7 +79,19 @@ paths.
   external consumer) into the same `project_id_missing` the other two entry
   points already produce. Also dropped a redundant intermediate variable
   the same pass flagged.
-- Full suite: 143 pass / 0 fail. typecheck and lint clean.
+- 2026-08-22 (that second pass's remaining angles, delivered later after the
+  rate limit reset): caught one more real gap — project-id resolution only
+  ran on the code+state success path, so `state_mismatch`, `invalid_response`,
+  and a provider-supplied `req.query.error` could still call `fail()` with
+  the raw, unvalidated cookie value, reintroducing the doomed-audit-insert
+  problem on three of the four failure paths. Fixed by resolving the project
+  id once, up front, before any of those checks run, keeping the specific
+  resolution error (if any) for the later "must have a valid project to
+  proceed" check to still report precisely. New regression test (state
+  mismatch + a malformed project cookie together) was mutation-checked:
+  reverted to the raw cookie value, confirmed the audit row silently fails
+  to insert, restored.
+- Full suite: 144 pass / 0 fail. typecheck and lint clean.
 
 ## Not in scope for this ticket
 
