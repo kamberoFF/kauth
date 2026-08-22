@@ -72,6 +72,11 @@ describe("email verification", () => {
     });
     expect(user.email_verified).toBe(true);
 
+    const event = await prisma.securityEvent.findFirstOrThrow({
+      where: { event_type: "EMAIL_CONFIRMED" },
+    });
+    expect(event.project_id).toBe(project.id);
+
     const replay = await api("POST", "/verify-email", { body: { token } });
     expect(replay.status).toBe(400);
     expect(replay.body.error.code).toBe("token_invalid");
@@ -239,6 +244,7 @@ describe("password reset", () => {
     });
 
     expect(events).toHaveLength(2);
+    expect(events.every((event) => event.project_id === project.id)).toBe(true);
   });
 });
 
@@ -255,6 +261,12 @@ describe("password change", () => {
 
     expect(response.status).toBe(401);
     expect(response.body.error.code).toBe("auth_failed");
+
+    const event = await prisma.securityEvent.findFirstOrThrow({
+      where: { event_type: "LOGIN_FAILED" },
+    });
+    expect(event.project_id).toBe(project.id);
+    expect(event.metadata).toMatchObject({ action: "change_password" });
   });
 
   it("requires authentication", async () => {
@@ -289,6 +301,7 @@ describe("password change", () => {
       where: { event_type: "PASSWORD_CHANGED" },
     });
     expect(changed).not.toBeNull();
+    expect(changed!.project_id).toBe(project.id);
   });
 
   it("rejects a password past the bcrypt input limit", async () => {

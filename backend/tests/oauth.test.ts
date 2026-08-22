@@ -144,6 +144,31 @@ describe("authorization redirect", () => {
     expect(response.headers.get("location")).toContain("provider.example");
     expect(cookieHeader(response)).toContain("kauth_oauth_state=");
   });
+
+  // The x-project-id header path (middlewares/project.ts) trims before
+  // validating; this path used to validate the raw query value, so the same
+  // logical id was accepted by one entry point and rejected by the other.
+  it("trims a project id padded with whitespace, matching the header path", async () => {
+    const response = await api(
+      "GET",
+      `/oauth/${PROVIDER_ID}?projectId=${encodeURIComponent(`  ${project.id}  `)}`,
+      { redirect: "manual" },
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toContain("provider.example");
+  });
+
+  it("404s a well-formed but nonexistent project id", async () => {
+    const response = await api(
+      "GET",
+      `/oauth/${PROVIDER_ID}?projectId=00000000-0000-4000-8000-000000000000`,
+      { redirect: "manual" },
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.body.error.code).toBe("project_not_found");
+  });
 });
 
 describe("callback", () => {
@@ -176,6 +201,77 @@ describe("callback", () => {
 
     const location = new URL(response.headers.get("location") ?? "");
     expect(location.searchParams.get("error")).toBe("access_denied");
+  });
+
+  it("is not fooled by a provider-supplied error that spells out an internal failure code", async () => {
+    const { cookie, state } = await startFlow();
+
+    // req.query.error is attacker/provider-controlled and is checked before
+    // any cookie validation runs - attribution must not be driven by
+    // pattern-matching this string against resolveProjectIdOrThrow's own
+    // failure codes.
+    const response = await api(
+      "GET",
+      `/oauth/${PROVIDER_ID}/callback?error=project_not_found&state=${state}`,
+      { redirect: "manual", headers: { cookie } },
+    );
+
+    const location = new URL(response.headers.get("location") ?? "");
+    expect(location.searchParams.get("error")).toBe("project_not_found");
+
+    const event = await prisma.securityEvent.findFirstOrThrow({
+      where: { event_type: "OAUTH_LOGIN_FAILED" },
+    });
+    // The project cookie was never actually invalid, so it's still the
+    // correct attribution - a spoofed reason string must not null it out.
+    expect(event.project_id).toBe(project.id);
+  });
+
+  it("drops audit attribution rather than a silently-failed insert when the project cookie is malformed", async () => {
+    const { state, cookie } = await startFlow();
+    const tamperedCookie = cookie.replace(
+      `kauth_oauth_project=${project.id}`,
+      "kauth_oauth_project=not-a-uuid",
+    );
+    expect(tamperedCookie).not.toBe(cookie);
+
+    const response = await api(
+      "GET",
+      `/oauth/${PROVIDER_ID}/callback?code=${VALID_CODE}&state=${state}`,
+      { redirect: "manual", headers: { cookie: tamperedCookie } },
+    );
+
+    const location = new URL(response.headers.get("location") ?? "");
+    expect(location.searchParams.get("error")).toBe("project_id_invalid");
+
+    const event = await prisma.securityEvent.findFirstOrThrow({
+      where: { event_type: "OAUTH_LOGIN_FAILED" },
+    });
+    expect(event.project_id).toBeNull();
+  });
+
+  it("re-validates the project cookie rather than trusting its mere presence", async () => {
+    const { state, cookie } = await startFlow();
+
+    // Safe to delete directly: no user exists under this project yet, so
+    // there's nothing for the FK-restricted relations to block on.
+    await prisma.project.delete({ where: { id: project.id } });
+
+    const response = await api(
+      "GET",
+      `/oauth/${PROVIDER_ID}/callback?code=${VALID_CODE}&state=${state}`,
+      { redirect: "manual", headers: { cookie } },
+    );
+
+    const location = new URL(response.headers.get("location") ?? "");
+    expect(location.searchParams.get("error")).toBe("project_not_found");
+    expect(await prisma.user.count()).toBe(0);
+
+    const event = await prisma.securityEvent.findFirstOrThrow({
+      where: { event_type: "OAUTH_LOGIN_FAILED" },
+    });
+    expect(event.project_id).toBeNull();
+    expect(event.metadata).toMatchObject({ reason: "project_not_found" });
   });
 
   it("logs a failed flow", async () => {

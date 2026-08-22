@@ -5,8 +5,7 @@ import { prisma } from "../lib/prisma";
 import { appError } from "../utils/errors";
 import { requireDeviceId } from "../utils/requestGuards";
 import { oauthCookieOptions } from "../config/cookies";
-import { UUID_REGEX } from "../constants/regex";
-import { resolveProject } from "../lib/projects";
+import { resolveProjectIdOrThrow } from "../lib/projects";
 import {
   getOAuthProvider,
   enabledProviders,
@@ -72,39 +71,17 @@ export const startOAuth: RequestHandler = async (req, res, next) => {
     // A redirect flow can't carry X-Project-Id, so the project travels as a
     // query param instead and rides the same cookie round trip as state/PKCE.
     const projectIdParam =
-      typeof req.query.projectId === "string" ? req.query.projectId : "";
-
-    if (!projectIdParam) {
-      return next(
-        appError(
-          400,
-          "Missing required query parameter: projectId",
-          "project_id_missing",
-        ),
-      );
-    }
-
-    if (!UUID_REGEX.test(projectIdParam)) {
-      return next(
-        appError(
-          400,
-          "Invalid projectId format. Must be a valid UUID v4",
-          "project_id_invalid",
-        ),
-      );
-    }
-
-    const project = await resolveProject(projectIdParam);
-
-    if (!project) {
-      return next(appError(404, "Project not found", "project_not_found"));
-    }
+      typeof req.query.projectId === "string" ? req.query.projectId : undefined;
+    const projectId = await resolveProjectIdOrThrow(
+      projectIdParam,
+      "query parameter: projectId",
+    );
 
     const state = generateState();
     const codeVerifier = generateCodeVerifier();
 
     res.cookie(STATE_COOKIE, state, oauthCookieOptions);
-    res.cookie(PROJECT_COOKIE, project.id, oauthCookieOptions);
+    res.cookie(PROJECT_COOKIE, projectId, oauthCookieOptions);
 
     if (provider.usesPkce) {
       res.cookie(VERIFIER_COOKIE, codeVerifier, oauthCookieOptions);
@@ -254,10 +231,20 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
   const codeVerifier = readAndClearCookie(req, res, VERIFIER_COOKIE);
   const projectId = readAndClearCookie(req, res, PROJECT_COOKIE);
 
+  // Starts as the raw cookie value (matching every failure reason that can
+  // fire before project-id resolution runs — state_mismatch, invalid_response,
+  // a provider-supplied req.query.error — which should still attribute to
+  // whatever project this flow named) and is only ever nulled out once
+  // resolution actively fails, never inferred from the failure reason string
+  // itself: project_id is a real FK, so a malformed or stale/deleted id would
+  // just fail the audit INSERT and be silently dropped by
+  // tryRecordSecurityEvent's catch.
+  let attributedProjectId: string | null = projectId ?? null;
+
   async function fail(reason: string) {
     await tryRecordSecurityEvent({
       type: "OAUTH_LOGIN_FAILED",
-      projectId: projectId ?? null,
+      projectId: attributedProjectId,
       ...context,
       metadata: { provider: providerId, reason },
     });
@@ -287,8 +274,17 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
       return await fail("state_mismatch");
     }
 
-    if (!projectId) {
-      return await fail("project_missing");
+    // Re-validated rather than trusted on the cookie's mere presence (this
+    // also covers the cookie being absent entirely, folding what used to be
+    // a separate project_missing check into the same project_id_missing code
+    // requireProject/startOAuth already produce): the cookie was a real
+    // project id when startOAuth set it, but nothing stops the project it
+    // names from having been deleted in the meantime.
+    try {
+      attributedProjectId = await resolveProjectIdOrThrow(projectId, "project cookie");
+    } catch (error) {
+      attributedProjectId = null;
+      throw error;
     }
 
     if (provider.usesPkce && !codeVerifier) {
@@ -300,7 +296,15 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
       codeVerifier ?? "",
     );
     const profile = await provider.fetchProfile(tokens);
-    const user = await resolveUser(provider, profile, tokens, context, projectId);
+    // Non-null: only set to null in the catch above, which rethrows before
+    // reaching here.
+    const user = await resolveUser(
+      provider,
+      profile,
+      tokens,
+      context,
+      attributedProjectId!,
+    );
 
     await tryRecordSecurityEvent({
       type: "OAUTH_LOGIN_SUCCESS",
