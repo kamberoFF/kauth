@@ -10,6 +10,19 @@ Issues and specs for this repo live as markdown files in `.scratch/`.
 - Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
 
+## Closing an implement-flow ticket
+
+An implementation ticket's terminal `Status:` value is `done` — distinct from
+the five triage roles (`triage-labels.md`) and from wayfinder's
+`claimed`/`resolved` (below), neither of which represent "finished and
+merged."
+
+**When `/implement` (or any agent) merges a ticket's work, the same commit
+that merges it must also update the ticket file**: set `Status: done` and
+check every satisfied box. Never leave a merged ticket's tracker file behind
+— a stale `ready-for-agent` on already-shipped work is misleading to the next
+agent or human who reads it.
+
 ## When a skill says "publish to the issue tracker"
 
 Create a new file under `.scratch/<feature-slug>/` (creating the directory if needed).

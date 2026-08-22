@@ -3,7 +3,16 @@
 **Living document.** Unlike the dated audit and remediation logs, this file is
 kept current — if it disagrees with the code, the file is wrong.
 
-Last reviewed: 2026-07-29.
+Last reviewed: 2026-08-22.
+
+**Multi-tenancy pivot in progress.** As of 2026-08-22 kauth is being extended
+into a self-hosted, multi-tenant auth platform — see
+`.scratch/clerk-clone/map.md` and its `clerk-clone-foundation` tickets.
+Tickets 01–02 (the `Project` entity and project-scoping across the full auth
+surface) are done and merged; the item below still applies to everything
+built *before* this pivot started, and multi-tenancy itself is no longer
+"deliberately last" — see the map's reconciliation note for why schema work
+went ahead of the rest of this backlog.
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
 That plan was written in June 2026, before any of it was built; the parts that
