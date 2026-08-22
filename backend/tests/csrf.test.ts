@@ -1,5 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { api, resetDatabase, startTestServer, stopTestServer } from "./helpers/api";
+import {
+  api,
+  createTestProject,
+  resetDatabase,
+  startTestServer,
+  stopTestServer,
+} from "./helpers/api";
 import { prisma } from "../lib/prisma";
 import config from "../config";
 
@@ -12,14 +18,20 @@ const credentials = {
 const TRUSTED_ORIGIN = config.frontend_url;
 const HOSTILE_ORIGIN = "https://evil.example";
 
+let project: Awaited<ReturnType<typeof createTestProject>>;
+
 beforeAll(startTestServer);
 afterAll(stopTestServer);
 beforeEach(resetDatabase);
+beforeEach(async () => {
+  project = await createTestProject();
+});
 
 describe("origin validation", () => {
   it("allows a state-changing request from a trusted origin", async () => {
     const response = await api("POST", "/register", {
       body: credentials,
+      projectId: project.id,
       headers: { origin: TRUSTED_ORIGIN },
     });
 
@@ -62,7 +74,10 @@ describe("origin validation", () => {
   });
 
   it("allows non-browser clients that send no origin at all", async () => {
-    const response = await api("POST", "/register", { body: credentials });
+    const response = await api("POST", "/register", {
+      body: credentials,
+      projectId: project.id,
+    });
 
     expect(response.status).toBe(201);
   });
@@ -107,6 +122,7 @@ describe("csrf double submit", () => {
 
     const response = await api("POST", "/register", {
       body: credentials,
+      projectId: project.id,
       headers: { cookie, "x-csrf-token": token },
     });
 
@@ -166,7 +182,10 @@ describe("csrf double submit", () => {
   });
 
   it("does not apply to requests that carry no cookies", async () => {
-    const response = await api("POST", "/register", { body: credentials });
+    const response = await api("POST", "/register", {
+      body: credentials,
+      projectId: project.id,
+    });
 
     expect(response.status).toBe(201);
   });

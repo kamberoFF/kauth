@@ -1,5 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { api, resetDatabase, startTestServer, stopTestServer } from "./helpers/api";
+import {
+  api,
+  createTestProject,
+  resetDatabase,
+  startTestServer,
+  stopTestServer,
+} from "./helpers/api";
 import { prisma } from "../lib/prisma";
 
 const credentials = {
@@ -7,6 +13,8 @@ const credentials = {
   username: "auditor",
   password: "correct-horse-battery",
 };
+
+let project: Awaited<ReturnType<typeof createTestProject>>;
 
 function eventTypes() {
   return prisma.securityEvent
@@ -17,10 +25,13 @@ function eventTypes() {
 beforeAll(startTestServer);
 afterAll(stopTestServer);
 beforeEach(resetDatabase);
+beforeEach(async () => {
+  project = await createTestProject();
+});
 
 describe("security event log", () => {
   it("records a registration and the confirmation email that follows it", async () => {
-    await api("POST", "/register", { body: credentials });
+    await api("POST", "/register", { body: credentials, projectId: project.id });
 
     expect(await eventTypes()).toEqual([
       "USER_REGISTERED",
@@ -37,9 +48,10 @@ describe("security event log", () => {
   });
 
   it("records a failed login against a known account", async () => {
-    await api("POST", "/register", { body: credentials });
+    await api("POST", "/register", { body: credentials, projectId: project.id });
     await api("POST", "/login", {
       body: { email: credentials.email, password: "wrong-password-here" },
+      projectId: project.id,
     });
 
     const failure = await prisma.securityEvent.findFirstOrThrow({
@@ -54,6 +66,7 @@ describe("security event log", () => {
   it("records a failed login against an unknown account without a user id", async () => {
     await api("POST", "/login", {
       body: { email: "ghost@example.com", password: "wrong-password-here" },
+      projectId: project.id,
     });
 
     const failure = await prisma.securityEvent.findFirstOrThrow({
@@ -65,7 +78,10 @@ describe("security event log", () => {
   });
 
   it("records reuse detection at CRITICAL severity", async () => {
-    const registered = await api("POST", "/register", { body: credentials });
+    const registered = await api("POST", "/register", {
+      body: credentials,
+      projectId: project.id,
+    });
     const first = registered.body.refreshToken as string;
 
     await api("POST", "/refresh", { body: { refreshToken: first } });
@@ -80,7 +96,10 @@ describe("security event log", () => {
   });
 
   it("records a logout and keeps the revoked session referenced", async () => {
-    const registered = await api("POST", "/register", { body: credentials });
+    const registered = await api("POST", "/register", {
+      body: credentials,
+      projectId: project.id,
+    });
 
     await api("POST", "/logout", {
       accessToken: registered.body.accessToken,
@@ -100,9 +119,10 @@ describe("security event log", () => {
   });
 
   it("never writes credentials into event metadata", async () => {
-    await api("POST", "/register", { body: credentials });
+    await api("POST", "/register", { body: credentials, projectId: project.id });
     await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },
+      projectId: project.id,
     });
 
     const events = await prisma.securityEvent.findMany();
