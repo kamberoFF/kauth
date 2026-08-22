@@ -5,6 +5,8 @@ import { prisma } from "../lib/prisma";
 import { appError } from "../utils/errors";
 import { requireDeviceId } from "../utils/requestGuards";
 import { oauthCookieOptions } from "../config/cookies";
+import { UUID_REGEX } from "../constants/regex";
+import { resolveProject } from "../lib/projects";
 import {
   getOAuthProvider,
   enabledProviders,
@@ -26,6 +28,7 @@ import { sendAuthResponse } from "../lib/tokenTransport";
 
 const STATE_COOKIE = "kauth_oauth_state";
 const VERIFIER_COOKIE = "kauth_oauth_verifier";
+const PROJECT_COOKIE = "kauth_oauth_project";
 
 function frontendCallback(params: Record<string, string>) {
   const url = new URL("/oauth/callback", config.frontend_url);
@@ -58,7 +61,7 @@ export const listProviders: RequestHandler = (_req, res) => {
   res.json({ providers: enabledProviders() });
 };
 
-export const startOAuth: RequestHandler = (req, res, next) => {
+export const startOAuth: RequestHandler = async (req, res, next) => {
   try {
     const provider = getOAuthProvider(req.params.provider ?? "");
 
@@ -66,10 +69,42 @@ export const startOAuth: RequestHandler = (req, res, next) => {
       return next(appError(404, "Unknown provider", "provider_not_found"));
     }
 
+    // A redirect flow can't carry X-Project-Id, so the project travels as a
+    // query param instead and rides the same cookie round trip as state/PKCE.
+    const projectIdParam =
+      typeof req.query.projectId === "string" ? req.query.projectId : "";
+
+    if (!projectIdParam) {
+      return next(
+        appError(
+          400,
+          "Missing required query parameter: projectId",
+          "project_id_missing",
+        ),
+      );
+    }
+
+    if (!UUID_REGEX.test(projectIdParam)) {
+      return next(
+        appError(
+          400,
+          "Invalid projectId format. Must be a valid UUID v4",
+          "project_id_invalid",
+        ),
+      );
+    }
+
+    const project = await resolveProject(projectIdParam);
+
+    if (!project) {
+      return next(appError(404, "Project not found", "project_not_found"));
+    }
+
     const state = generateState();
     const codeVerifier = generateCodeVerifier();
 
     res.cookie(STATE_COOKIE, state, oauthCookieOptions);
+    res.cookie(PROJECT_COOKIE, project.id, oauthCookieOptions);
 
     if (provider.usesPkce) {
       res.cookie(VERIFIER_COOKIE, codeVerifier, oauthCookieOptions);
@@ -94,10 +129,12 @@ async function resolveUser(
   profile: OAuthProfile,
   tokens: OAuth2Tokens,
   context: { ip: string | null; userAgent: string | null },
+  projectId: string,
 ) {
   const linked = await prisma.account.findUnique({
     where: {
-      provider_id_account_id: {
+      project_id_provider_id_account_id: {
+        project_id: projectId,
         provider_id: provider.id,
         account_id: profile.accountId,
       },
@@ -123,7 +160,7 @@ async function resolveUser(
   }
 
   const existing = await prisma.user.findUnique({
-    where: { email: profile.email },
+    where: { project_id_email: { project_id: projectId, email: profile.email } },
   });
 
   if (existing) {
@@ -139,6 +176,7 @@ async function resolveUser(
       await tx.account.create({
         data: {
           user_id: existing.id,
+          project_id: projectId,
           provider_id: provider.id,
           account_id: profile.accountId,
           ...oauthTokenFields(tokens),
@@ -149,6 +187,7 @@ async function resolveUser(
         {
           type: "OAUTH_ACCOUNT_LINKED",
           userId: existing.id,
+          projectId,
           ...context,
           metadata: { provider: provider.id },
         },
@@ -162,6 +201,7 @@ async function resolveUser(
   return prisma.$transaction(async (tx) => {
     const created = await tx.user.create({
       data: {
+        project_id: projectId,
         email: profile.email!,
         email_verified: profile.emailVerified,
         image: profile.image,
@@ -172,6 +212,7 @@ async function resolveUser(
     await tx.account.create({
       data: {
         user_id: created.id,
+        project_id: projectId,
         provider_id: provider.id,
         account_id: profile.accountId,
         ...oauthTokenFields(tokens),
@@ -182,6 +223,7 @@ async function resolveUser(
       {
         type: "USER_REGISTERED",
         userId: created.id,
+        projectId,
         ...context,
         metadata: { provider: provider.id },
       },
@@ -210,10 +252,12 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
 
   const state = readAndClearCookie(req, res, STATE_COOKIE);
   const codeVerifier = readAndClearCookie(req, res, VERIFIER_COOKIE);
+  const projectId = readAndClearCookie(req, res, PROJECT_COOKIE);
 
   async function fail(reason: string) {
     await tryRecordSecurityEvent({
       type: "OAUTH_LOGIN_FAILED",
+      projectId: projectId ?? null,
       ...context,
       metadata: { provider: providerId, reason },
     });
@@ -243,6 +287,10 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
       return await fail("state_mismatch");
     }
 
+    if (!projectId) {
+      return await fail("project_missing");
+    }
+
     if (provider.usesPkce && !codeVerifier) {
       return await fail("missing_code_verifier");
     }
@@ -252,11 +300,12 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
       codeVerifier ?? "",
     );
     const profile = await provider.fetchProfile(tokens);
-    const user = await resolveUser(provider, profile, tokens, context);
+    const user = await resolveUser(provider, profile, tokens, context, projectId);
 
     await tryRecordSecurityEvent({
       type: "OAUTH_LOGIN_SUCCESS",
       userId: user.id,
+      projectId: user.project_id,
       ...context,
       metadata: { provider: provider.id },
     });
@@ -264,7 +313,11 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
     // The browser cannot supply a device id on a redirect, and putting session
     // tokens in a URL would leak them into history and referrers. The frontend
     // trades this short-lived code for a real token pair instead.
-    const exchangeCode = await issueRecoveryToken(user.id, "OAUTH_EXCHANGE");
+    const exchangeCode = await issueRecoveryToken(
+      user.id,
+      "OAUTH_EXCHANGE",
+      user.project_id,
+    );
 
     res.redirect(frontendCallback({ code: exchangeCode }));
   } catch (error) {
@@ -283,12 +336,16 @@ export const exchangeOAuthCode: RequestHandler = async (req, res, next) => {
     if (!parsed.success)
       return next(appError(400, "Invalid input", "validation"));
 
-    const context = clientContext(req, requireDeviceId(req));
+    const deviceId = requireDeviceId(req);
     const record = await consumeRecoveryToken(parsed.data.code, "OAUTH_EXCHANGE");
 
     if (!record) {
       return next(appError(400, "Invalid or expired code", "token_invalid"));
     }
+
+    // Project id comes from the exchange record itself, same as refresh
+    // derives it from the refresh-token row - it's already project-scoped.
+    const context = clientContext(req, deviceId, record.project_id);
 
     const result = await prisma.$transaction(async (tx) => {
       await revokeSessions(
@@ -297,13 +354,19 @@ export const exchangeOAuthCode: RequestHandler = async (req, res, next) => {
         "replaced_by_new_login",
       );
 
-      const created = await createSession(tx, record.user_id, context);
+      const created = await createSession(
+        tx,
+        record.user_id,
+        record.project_id,
+        context,
+      );
 
       await recordSecurityEvent(
         {
           type: "LOGIN_SUCCESS",
           userId: record.user_id,
           sessionId: created.session.id,
+          projectId: record.project_id,
           ip: context.ip,
           userAgent: context.userAgent,
           metadata: { provider: "oauth_exchange" },

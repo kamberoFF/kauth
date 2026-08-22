@@ -8,7 +8,7 @@ import {
   tokenSchema,
 } from "../lib/validation";
 import { appError } from "../utils/errors";
-import { requireUserId } from "../utils/requestGuards";
+import { requireProjectId, requireUserId } from "../utils/requestGuards";
 import { CREDENTIAL_PROVIDER } from "../constants/providers";
 import {
   consumeRecoveryToken,
@@ -43,17 +43,23 @@ export const sendVerificationEmail: RequestHandler = async (req, res, next) => {
       return next(appError(400, "Invalid input", "validation"));
 
     const context = requestContext(req);
+    const projectId = requireProjectId(req);
     const user = await prisma.user.findUnique({
-      where: { email: parsed.data.email },
+      where: { project_id_email: { project_id: projectId, email: parsed.data.email } },
     });
 
     if (user && !user.email_verified) {
-      const token = await issueRecoveryToken(user.id, "EMAIL_CONFIRMATION");
+      const token = await issueRecoveryToken(
+        user.id,
+        "EMAIL_CONFIRMATION",
+        projectId,
+      );
 
       await sendMail(verificationEmail(user.email, token));
       await tryRecordSecurityEvent({
         type: "EMAIL_CONFIRMATION_SENT",
         userId: user.id,
+        projectId,
         ...context,
       });
     }
@@ -107,8 +113,9 @@ export const forgotPassword: RequestHandler = async (req, res, next) => {
       return next(appError(400, "Invalid input", "validation"));
 
     const context = requestContext(req);
+    const projectId = requireProjectId(req);
     const user = await prisma.user.findUnique({
-      where: { email: parsed.data.email },
+      where: { project_id_email: { project_id: projectId, email: parsed.data.email } },
       include: {
         accounts: { where: { provider_id: CREDENTIAL_PROVIDER }, take: 1 },
       },
@@ -116,12 +123,13 @@ export const forgotPassword: RequestHandler = async (req, res, next) => {
 
     // A social-only account has no password to reset, so no email goes out.
     if (user && user.accounts.length > 0) {
-      const token = await issueRecoveryToken(user.id, "PASSWORD_RESET");
+      const token = await issueRecoveryToken(user.id, "PASSWORD_RESET", projectId);
 
       await sendMail(passwordResetEmail(user.email, token));
       await tryRecordSecurityEvent({
         type: "PASSWORD_RESET_REQUESTED",
         userId: user.id,
+        projectId,
         ...context,
       });
     }
