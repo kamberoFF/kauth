@@ -22,6 +22,14 @@ to hand off for execution.
   identity-oracle fixes → session policy → multi-instance readiness) precedes
   this work — standing constraint, not open for re-litigation on this map.
   Multi-instance readiness is a hard prerequisite for a real hosted platform.
+  **Reconciled 2026-08-22:** tickets 01–02 built the multi-tenant schema and
+  core session-lifecycle scoping ahead of that backlog anyway. Deliberate,
+  not a lapse — schema shape (the `Project` entity, `project_id` on every
+  user-owned table, the JWT `projectId` claim) is far cheaper to get right
+  once, greenfield, than to retrofit after the hardening items land and more
+  code depends on the shape. The hardening backlog still precedes the
+  *remaining* map tickets (03+); it does not have to precede the data model
+  itself.
 - This map's destination reverses `docs/roadmap.md`'s current "Deliberately
   not doing: becoming an OIDC provider... not an identity provider other
   applications integrate against" line. That line gets struck/rewritten once
