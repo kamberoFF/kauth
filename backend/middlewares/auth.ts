@@ -44,6 +44,7 @@ export const requireAuth: RequestHandler = async (req, _res, next) => {
       select: {
         id: true,
         user_id: true,
+        project_id: true,
         status: true,
         expires_at: true,
       },
@@ -56,6 +57,12 @@ export const requireAuth: RequestHandler = async (req, _res, next) => {
     // A validly signed token whose subject disagrees with its session is not an
     // ordinary expiry; it means a token was minted against someone else's row.
     if (session.user_id !== payload.userId) {
+      return next(appError(401, "Invalid or expired token", "token_invalid"));
+    }
+
+    // Same failure class as the user-id check above: a token minted for one
+    // project must never be honored against another project's session.
+    if (session.project_id !== payload.projectId) {
       return next(appError(401, "Invalid or expired token", "token_invalid"));
     }
 

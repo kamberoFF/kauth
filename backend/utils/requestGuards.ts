@@ -25,3 +25,15 @@ export function requireUserId(req: Request): string {
 
   return req.userId;
 }
+
+export function requireProjectId(req: Request): string {
+  if (!req.projectId) {
+    throw appError(
+      500,
+      "Project id missing. Did you forget requireProject middleware?",
+      "project_context_missing",
+    );
+  }
+
+  return req.projectId;
+}

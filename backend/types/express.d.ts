@@ -7,6 +7,7 @@ declare global {
       userId?: string;
       sessionId?: string;
       deviceId?: string;
+      projectId?: string;
       csrfToken?: string;
     }
   }

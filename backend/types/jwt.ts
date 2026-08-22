@@ -2,6 +2,7 @@ export interface GenerateTokensParams {
   userId: string;
   familyId: string;
   sessionId: string;
+  projectId: string;
 }
 
 export interface AccessToken {
@@ -16,6 +17,7 @@ export interface AccessTokenPayload {
   familyId: string;
   userId: string;
   sid: string;
+  projectId: string;
 }
 
 export interface RefreshToken {
