@@ -118,6 +118,63 @@ describe("security event log", () => {
     expect(session.revoked_reason).toBe("user_logout");
   });
 
+  it("records a self-service session revocation", async () => {
+    const OTHER_DEVICE_ID = "9f8e7d6c-5b4a-4392-8172-6f5e4d3c2b1a";
+    const registered = await api("POST", "/register", {
+      body: credentials,
+      projectId: project.id,
+    });
+    await api("POST", "/login", {
+      body: { email: credentials.email, password: credentials.password },
+      deviceId: OTHER_DEVICE_ID,
+      projectId: project.id,
+    });
+    const target = await prisma.session.findFirstOrThrow({
+      where: { device_id: OTHER_DEVICE_ID },
+    });
+
+    await api("DELETE", `/sessions/${target.id}`, {
+      accessToken: registered.body.accessToken,
+    });
+
+    const revoked = await prisma.securityEvent.findFirstOrThrow({
+      where: { event_type: "SESSION_REVOKED" },
+    });
+
+    expect(revoked.severity).toBe("WARNING");
+    expect(revoked.session_id).toBe(target.id);
+    expect(revoked.project_id).toBe(project.id);
+  });
+
+  it("records an account unlink", async () => {
+    const registered = await api("POST", "/register", {
+      body: credentials,
+      projectId: project.id,
+    });
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { project_id_email: { project_id: project.id, email: credentials.email } },
+    });
+    await prisma.account.create({
+      data: {
+        user_id: user.id,
+        project_id: project.id,
+        provider_id: "google",
+        account_id: "google-subject-123",
+      },
+    });
+
+    await api("DELETE", "/accounts/google", {
+      accessToken: registered.body.accessToken,
+    });
+
+    const unlinked = await prisma.securityEvent.findFirstOrThrow({
+      where: { event_type: "ACCOUNT_UNLINKED" },
+    });
+
+    expect(unlinked.severity).toBe("WARNING");
+    expect(unlinked.metadata).toMatchObject({ provider: "google" });
+  });
+
   it("never writes credentials into event metadata", async () => {
     await api("POST", "/register", { body: credentials, projectId: project.id });
     await api("POST", "/login", {

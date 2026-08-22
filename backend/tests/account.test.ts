@@ -306,3 +306,171 @@ describe("password change", () => {
     expect(response.body.error.code).toBe("validation");
   });
 });
+
+describe("GET /accounts", () => {
+  it("requires authentication", async () => {
+    const response = await api("GET", "/accounts");
+
+    expect(response.status).toBe(401);
+  });
+
+  it("lists every linked provider for the caller", async () => {
+    const registered = await registerUser();
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { project_id_email: { project_id: project.id, email: credentials.email } },
+    });
+    // Bypasses the OAuth flow deliberately: this test is about listing, not linking.
+    await prisma.account.create({
+      data: {
+        user_id: user.id,
+        project_id: project.id,
+        provider_id: "google",
+        account_id: "google-subject-123",
+        access_token: "should-never-be-returned",
+      },
+    });
+
+    const response = await api("GET", "/accounts", { accessToken: registered.body.accessToken });
+
+    expect(response.status).toBe(200);
+    const providers = response.body.accounts.map((a: { providerId: string }) => a.providerId);
+    expect(providers.sort()).toEqual(["credential", "google"]);
+  });
+
+  it("never returns credential or OAuth secrets", async () => {
+    const registered = await registerUser();
+
+    const response = await api("GET", "/accounts", { accessToken: registered.body.accessToken });
+    const [account] = response.body.accounts;
+
+    expect(Object.keys(account).sort()).toEqual(
+      ["id", "providerId", "linkedAt", "updatedAt"].sort(),
+    );
+  });
+
+  it("never leaks another project's linked accounts for the same email", async () => {
+    const otherProject = await createTestProject({ name: "Other Project" });
+    const registered = await registerUser();
+    await api("POST", "/register", { body: credentials, projectId: otherProject.id });
+
+    const response = await api("GET", "/accounts", { accessToken: registered.body.accessToken });
+
+    expect(response.body.accounts).toHaveLength(1);
+  });
+
+  /**
+   * Mutation check: temporarily drop `user_id` from the `where` clause in
+   * `listLinkedAccounts` and re-run this test — it must fail, because the
+   * caller would then see the other user's linked accounts in the same
+   * project too. Restore afterward.
+   */
+  it("never leaks another user's linked accounts within the same project", async () => {
+    const registered = await registerUser();
+    await api("POST", "/register", {
+      body: { email: "other@example.com", username: "other", password: credentials.password },
+      projectId: project.id,
+    });
+
+    const response = await api("GET", "/accounts", { accessToken: registered.body.accessToken });
+
+    expect(response.body.accounts).toHaveLength(1);
+    expect(response.body.accounts[0].providerId).toBe("credential");
+  });
+});
+
+describe("DELETE /accounts/:providerId", () => {
+  it("requires authentication", async () => {
+    const response = await api("DELETE", "/accounts/google");
+
+    expect(response.status).toBe(401);
+  });
+
+  it("unlinks a provider that isn't the caller's only sign-in method", async () => {
+    const registered = await registerUser();
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { project_id_email: { project_id: project.id, email: credentials.email } },
+    });
+    await prisma.account.create({
+      data: {
+        user_id: user.id,
+        project_id: project.id,
+        provider_id: "google",
+        account_id: "google-subject-123",
+      },
+    });
+
+    const response = await api("DELETE", "/accounts/google", {
+      accessToken: registered.body.accessToken,
+    });
+    expect(response.status).toBe(200);
+
+    const listed = await api("GET", "/accounts", { accessToken: registered.body.accessToken });
+    expect(listed.body.accounts).toHaveLength(1);
+    expect(listed.body.accounts[0].providerId).toBe("credential");
+
+    const event = await prisma.securityEvent.findFirst({
+      where: { event_type: "ACCOUNT_UNLINKED" },
+    });
+    expect(event).not.toBeNull();
+    expect(event!.severity).toBe("WARNING");
+  });
+
+  it("404s for a provider the caller never linked", async () => {
+    const registered = await registerUser();
+
+    const response = await api("DELETE", "/accounts/github", {
+      accessToken: registered.body.accessToken,
+    });
+
+    expect(response.status).toBe(404);
+    expect(response.body.error.code).toBe("account_not_found");
+  });
+
+  /**
+   * Mutation check: temporarily loosen the guard in `unlinkAccount` from
+   * `remaining <= 1` to `remaining === 0` and re-run this test — it must
+   * fail, because the only remaining credential would then be deletable.
+   * Restore afterward.
+   */
+  it("cannot unlink the only remaining sign-in method", async () => {
+    const registered = await registerUser();
+
+    const response = await api("DELETE", "/accounts/credential", {
+      accessToken: registered.body.accessToken,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("only_sign_in_method");
+
+    const remaining = await prisma.account.count({});
+    expect(remaining).toBe(1);
+  });
+
+  it("cannot be raced down to zero by two concurrent unlinks", async () => {
+    const registered = await registerUser();
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { project_id_email: { project_id: project.id, email: credentials.email } },
+    });
+    await prisma.account.create({
+      data: {
+        user_id: user.id,
+        project_id: project.id,
+        provider_id: "google",
+        account_id: "google-subject-123",
+      },
+    });
+
+    // Exactly two providers linked; firing both unlinks at once must never
+    // let both pass the "at least one remains" guard.
+    const [credentialResult, googleResult] = await Promise.all([
+      api("DELETE", "/accounts/credential", { accessToken: registered.body.accessToken }),
+      api("DELETE", "/accounts/google", { accessToken: registered.body.accessToken }),
+    ]);
+
+    const statuses = [credentialResult.status, googleResult.status].sort();
+    expect(statuses).toEqual([200, 400]);
+
+    const remaining = await prisma.account.count({ where: { user_id: user.id } });
+    expect(remaining).toBe(1);
+  });
+});
