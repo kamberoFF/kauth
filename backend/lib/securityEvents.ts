@@ -29,6 +29,7 @@ const SEVERITY: Record<SecurityEventType, SecurityEventSeverity> = {
   OAUTH_LOGIN_SUCCESS: SecurityEventSeverity.INFO,
   OAUTH_LOGIN_FAILED: SecurityEventSeverity.WARNING,
   OAUTH_ACCOUNT_LINKED: SecurityEventSeverity.WARNING,
+  ACCOUNT_UNLINKED: SecurityEventSeverity.WARNING,
   CSRF_VALIDATION_FAILED: SecurityEventSeverity.WARNING,
   SUSPICIOUS_ACTIVITY: SecurityEventSeverity.CRITICAL,
 };
