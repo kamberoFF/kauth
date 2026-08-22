@@ -49,3 +49,7 @@ export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
   newPassword,
 });
+
+export const createProjectSchema = z.object({
+  name: z.string().min(1).max(200),
+});
