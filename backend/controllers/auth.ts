@@ -9,7 +9,11 @@ import {
   refreshTokenSchema,
 } from "../lib/validation";
 import { appError } from "../utils/errors";
-import { requireDeviceId, requireUserId } from "../utils/requestGuards";
+import {
+  requireDeviceId,
+  requireProjectId,
+  requireUserId,
+} from "../utils/requestGuards";
 import { CREDENTIAL_PROVIDER } from "../constants/providers";
 import config from "../config";
 import { issueRecoveryToken } from "../lib/recoveryTokens";
@@ -40,14 +44,21 @@ export const register: RequestHandler = async (req, res, next) => {
       return next(appError(400, "Invalid input", "validation"));
 
     const { email, username, password, first_name, last_name } = parsed.data;
-    const context = clientContext(req, requireDeviceId(req));
+    const projectId = requireProjectId(req);
+    const context = clientContext(req, requireDeviceId(req), projectId);
 
-    // Both columns are unique, so an unchecked username collision would surface
-    // as an unhandled P2002 rather than a 409. The error handler still maps the
-    // race, but the common case deserves a specific code.
+    // Both columns are unique per project, so an unchecked username collision
+    // would surface as an unhandled P2002 rather than a 409. The error handler
+    // still maps the race, but the common case deserves a specific code.
     const [existingEmail, existingUsername] = await Promise.all([
-      prisma.user.findUnique({ where: { email }, select: { id: true } }),
-      prisma.user.findUnique({ where: { username }, select: { id: true } }),
+      prisma.user.findUnique({
+        where: { project_id_email: { project_id: projectId, email } },
+        select: { id: true },
+      }),
+      prisma.user.findUnique({
+        where: { project_id_username: { project_id: projectId, username } },
+        select: { id: true },
+      }),
     ]);
 
     if (existingEmail)
@@ -60,25 +71,27 @@ export const register: RequestHandler = async (req, res, next) => {
 
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
-        data: { email, username, first_name, last_name },
+        data: { project_id: projectId, email, username, first_name, last_name },
       });
 
       await tx.account.create({
         data: {
           user_id: user.id,
+          project_id: projectId,
           provider_id: CREDENTIAL_PROVIDER,
           account_id: user.id,
           password: passwordHash,
         },
       });
 
-      const created = await createSession(tx, user.id, context);
+      const created = await createSession(tx, user.id, projectId, context);
 
       await recordSecurityEvent(
         {
           type: "USER_REGISTERED",
           userId: user.id,
           sessionId: created.session.id,
+          projectId,
           ip: context.ip,
           userAgent: context.userAgent,
           metadata: { provider: CREDENTIAL_PROVIDER },
@@ -92,12 +105,14 @@ export const register: RequestHandler = async (req, res, next) => {
     const verificationToken = await issueRecoveryToken(
       result.user.id,
       "EMAIL_CONFIRMATION",
+      projectId,
     );
 
     await sendMail(verificationEmail(result.user.email, verificationToken));
     await tryRecordSecurityEvent({
       type: "EMAIL_CONFIRMATION_SENT",
       userId: result.user.id,
+      projectId,
       ip: context.ip,
       userAgent: context.userAgent,
     });
@@ -133,10 +148,11 @@ export const login: RequestHandler = async (req, res, next) => {
       return next(appError(400, "Invalid input", "validation"));
 
     const { email, password } = parsed.data;
-    const context = clientContext(req, requireDeviceId(req));
+    const projectId = requireProjectId(req);
+    const context = clientContext(req, requireDeviceId(req), projectId);
 
     const user = await prisma.user.findUnique({
-      where: { email },
+      where: { project_id_email: { project_id: projectId, email } },
       include: {
         accounts: { where: { provider_id: CREDENTIAL_PROVIDER }, take: 1 },
       },
@@ -151,6 +167,7 @@ export const login: RequestHandler = async (req, res, next) => {
       await tryRecordSecurityEvent({
         type: "LOGIN_FAILED",
         userId: user?.id ?? null,
+        projectId,
         ip: context.ip,
         userAgent: context.userAgent,
         metadata: {
@@ -172,6 +189,7 @@ export const login: RequestHandler = async (req, res, next) => {
       await tryRecordSecurityEvent({
         type: "LOGIN_FAILED",
         userId: user.id,
+        projectId,
         ip: context.ip,
         userAgent: context.userAgent,
         metadata: { email, reason: "email_not_verified" },
@@ -189,13 +207,14 @@ export const login: RequestHandler = async (req, res, next) => {
         "replaced_by_new_login",
       );
 
-      const created = await createSession(tx, user.id, context);
+      const created = await createSession(tx, user.id, projectId, context);
 
       await recordSecurityEvent(
         {
           type: "LOGIN_SUCCESS",
           userId: user.id,
           sessionId: created.session.id,
+          projectId,
           ip: context.ip,
           userAgent: context.userAgent,
           metadata: { provider: CREDENTIAL_PROVIDER },
@@ -231,7 +250,7 @@ export const refresh: RequestHandler = async (req, res, next) => {
     if (!parsed.success)
       return next(appError(400, "Invalid input", "validation"));
 
-    const context = clientContext(req, requireDeviceId(req));
+    const deviceId = requireDeviceId(req);
     const presented = parseRefreshToken(parsed.data);
 
     if (!presented) {
@@ -246,6 +265,12 @@ export const refresh: RequestHandler = async (req, res, next) => {
     if (!storedToken) {
       return next(appError(401, "Invalid refresh token", "token_invalid"));
     }
+
+    // Project id is derived from the token's own row, never re-read from the
+    // client: refresh operates on a record that already belongs to exactly
+    // one project, so there's nothing for a client-supplied id to add except
+    // an opportunity to spoof it.
+    const context = clientContext(req, deviceId, storedToken.project_id);
 
     // The verifier is checked before any revocation decision: acting on a bare
     // selector would let anyone who observed one kill a stranger's session.
@@ -276,6 +301,7 @@ export const refresh: RequestHandler = async (req, res, next) => {
             type: "REFRESH_REUSE_DETECTED",
             userId: storedToken.user_id,
             sessionId: storedToken.session_id,
+            projectId: context.projectId,
             ip: context.ip,
             userAgent: context.userAgent,
             metadata: {
@@ -346,6 +372,7 @@ export const refresh: RequestHandler = async (req, res, next) => {
       userId: storedToken.user_id,
       familyId: storedToken.family_id,
       sessionId: storedToken.session_id,
+      projectId: context.projectId,
     });
 
     // The replacement dies with its session rather than outliving it, so the
@@ -379,6 +406,7 @@ export const refresh: RequestHandler = async (req, res, next) => {
           selector: refreshToken.selector,
           session_id: storedToken.session_id,
           user_id: storedToken.user_id,
+          project_id: storedToken.project_id,
           family_id: storedToken.family_id,
           token_hash: await bcrypt.hash(
             refreshToken.verifier,
@@ -395,6 +423,7 @@ export const refresh: RequestHandler = async (req, res, next) => {
           type: "REFRESH_SUCCESS",
           userId: storedToken.user_id,
           sessionId: storedToken.session_id,
+          projectId: context.projectId,
           ip: context.ip,
           userAgent: context.userAgent,
         },
@@ -416,7 +445,8 @@ export const refresh: RequestHandler = async (req, res, next) => {
 export const logout: RequestHandler = async (req, res, next) => {
   try {
     const userId = requireUserId(req);
-    const context = clientContext(req, requireDeviceId(req));
+    const projectId = requireProjectId(req);
+    const context = clientContext(req, requireDeviceId(req), projectId);
 
     await prisma.$transaction(async (tx) => {
       const revoked = await revokeSessions(
@@ -430,6 +460,7 @@ export const logout: RequestHandler = async (req, res, next) => {
           type: "LOGOUT",
           userId,
           sessionId: revoked[0] ?? null,
+          projectId,
           ip: context.ip,
           userAgent: context.userAgent,
           metadata: { revoked_sessions: revoked.length },

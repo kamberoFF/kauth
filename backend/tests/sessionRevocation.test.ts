@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import {
   api,
+  createTestProject,
   resetDatabase,
   startTestServer,
   stopTestServer,
@@ -20,8 +21,13 @@ const credentials = {
 
 const mailer = createMemoryMailer();
 
+let project: Awaited<ReturnType<typeof createTestProject>>;
+
 function registerUser(overrides: Record<string, unknown> = {}) {
-  return api("POST", "/register", { body: { ...credentials, ...overrides } });
+  return api("POST", "/register", {
+    body: { ...credentials, ...overrides },
+    projectId: project.id,
+  });
 }
 
 /** Registers, then returns the live access token and its session id. */
@@ -60,6 +66,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetDatabase();
   mailer.clear();
+  project = await createTestProject();
 });
 
 describe("access tokens are bound to their session", () => {
@@ -97,14 +104,22 @@ describe("access tokens are bound to their session", () => {
     const { sessionId } = await signIn();
 
     const intruder = await prisma.user.create({
-      data: { email: "intruder@example.com", username: "intruder" },
+      data: {
+        project_id: project.id,
+        email: "intruder@example.com",
+        username: "intruder",
+      },
     });
 
-    // Correctly signed, but minted against someone else's session.
+    // Correctly signed, but minted against someone else's session. Same
+    // project as the victim deliberately: this test isolates the userId
+    // mismatch path, not the projectId one (that's a separate test in
+    // auth.test.ts's multi-tenant isolation suite).
     const { accessToken } = generateTokens({
       userId: intruder.id,
       familyId: crypto.randomUUID(),
       sessionId,
+      projectId: project.id,
     });
 
     const response = await callProtected(accessToken.token);
@@ -151,6 +166,7 @@ describe("revocation takes effect immediately", () => {
 
     const relogin = await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },
+      projectId: project.id,
     });
     expect(relogin.status).toBe(200);
 
@@ -169,11 +185,13 @@ describe("revocation takes effect immediately", () => {
     const second = await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },
       deviceId: OTHER_DEVICE_ID,
+      projectId: project.id,
     });
 
     const first = await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },
       deviceId: TEST_DEVICE_ID,
+      projectId: project.id,
     });
 
     await api("POST", "/logout", {
@@ -210,7 +228,10 @@ describe("revocation takes effect immediately", () => {
   it("kills the access token on password reset", async () => {
     const { accessToken } = await signIn();
 
-    await api("POST", "/forgot-password", { body: { email: credentials.email } });
+    await api("POST", "/forgot-password", {
+      body: { email: credentials.email },
+      projectId: project.id,
+    });
     const token = tokenFromLastMail(credentials.email)!;
 
     const reset = await api("POST", "/reset-password", {

@@ -14,6 +14,15 @@ const prisma = new PrismaClient({
 });
 
 async function main() {
+  const project = await prisma.project.upsert({
+    where: { id: "00000000-0000-4000-8000-000000000000" },
+    update: {},
+    create: {
+      id: "00000000-0000-4000-8000-000000000000",
+      name: "Seed Project",
+    },
+  });
+
   const demoUsers = [
     {
       email: "admin@example.com",
@@ -44,9 +53,11 @@ async function main() {
     };
 
     const user = await prisma.user.upsert({
-      where: { email: demo.email },
+      where: {
+        project_id_email: { project_id: project.id, email: demo.email },
+      },
       update: profile,
-      create: { email: demo.email, ...profile },
+      create: { project_id: project.id, email: demo.email, ...profile },
     });
 
     await prisma.account.upsert({
@@ -59,6 +70,7 @@ async function main() {
       update: { password: passwordHash },
       create: {
         user_id: user.id,
+        project_id: project.id,
         provider_id: CREDENTIAL_PROVIDER,
         account_id: user.id,
         password: passwordHash,

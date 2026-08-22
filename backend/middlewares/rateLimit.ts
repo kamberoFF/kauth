@@ -26,16 +26,22 @@ const byIp = (req: Request) => ipKeyGenerator(req.ip ?? UNKNOWN_IP);
 
 /**
  * Keys on the submitted email so a distributed attacker cannot spread a
- * password-guessing run for one account across many source addresses.
+ * password-guessing run for one account across many source addresses. The
+ * project id is part of the key too, so identical email addresses in two
+ * different projects never share a throttle bucket.
  */
 const byAccount = (req: Request) => {
   const email: unknown = req.body?.email;
 
-  if (typeof email !== "string" || email.trim().length === 0) {
+  if (
+    typeof email !== "string" ||
+    email.trim().length === 0 ||
+    !req.projectId
+  ) {
     return `ip:${ipKeyGenerator(req.ip ?? UNKNOWN_IP)}`;
   }
 
-  return `account:${email.trim().toLowerCase()}`;
+  return `account:${req.projectId}:${email.trim().toLowerCase()}`;
 };
 
 /**

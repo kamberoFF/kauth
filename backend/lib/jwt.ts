@@ -17,6 +17,7 @@ export const generateTokens = ({
   userId,
   familyId,
   sessionId,
+  projectId,
 }: GenerateTokensParams): {
   familyId: string;
   accessToken: AccessToken;
@@ -24,11 +25,15 @@ export const generateTokens = ({
 } => {
   const jwtid = crypto.randomUUID();
 
-  const accessToken = jwt.sign({ userId, familyId, sid: sessionId }, JWT_SECRET, {
-    algorithm: JWT_ALGORITHM,
-    jwtid,
-    expiresIn: ACCESS_TOKEN_TTL_MS / 1000,
-  });
+  const accessToken = jwt.sign(
+    { userId, familyId, sid: sessionId, projectId },
+    JWT_SECRET,
+    {
+      algorithm: JWT_ALGORITHM,
+      jwtid,
+      expiresIn: ACCESS_TOKEN_TTL_MS / 1000,
+    },
+  );
 
   const selector = crypto.randomBytes(16).toString("base64url");
   const verifier = crypto.randomBytes(32).toString("base64url");
@@ -69,7 +74,13 @@ export const verifyAccessToken = (token: string): AccessTokenPayload | null => {
       algorithms: [JWT_ALGORITHM],
     }) as Partial<AccessTokenPayload>;
 
-    if (!payload.sid || !payload.userId || !payload.familyId || !payload.jti) {
+    if (
+      !payload.sid ||
+      !payload.userId ||
+      !payload.familyId ||
+      !payload.jti ||
+      !payload.projectId
+    ) {
       return null;
     }
 

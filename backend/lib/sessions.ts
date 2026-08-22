@@ -20,13 +20,19 @@ export type RevocationReason =
 
 export interface ClientContext {
   deviceId: string;
+  projectId: string;
   ip: string | null;
   userAgent: string | null;
 }
 
-export function clientContext(req: Request, deviceId: string): ClientContext {
+export function clientContext(
+  req: Request,
+  deviceId: string,
+  projectId: string,
+): ClientContext {
   return {
     deviceId,
+    projectId,
     ip: req.ip ?? null,
     userAgent: req.get("user-agent") ?? null,
   };
@@ -44,6 +50,7 @@ export function sessionExpiry() {
 export async function createSession(
   tx: DbClient,
   userId: string,
+  projectId: string,
   context: ClientContext,
 ) {
   const familyId = crypto.randomUUID();
@@ -54,6 +61,7 @@ export async function createSession(
     userId,
     familyId,
     sessionId,
+    projectId,
   });
   const now = new Date();
   const expiresAt = sessionExpiry();
@@ -62,6 +70,7 @@ export async function createSession(
     data: {
       id: sessionId,
       user_id: userId,
+      project_id: projectId,
       device_id: context.deviceId,
       expires_at: expiresAt,
       last_used_at: now,
@@ -77,6 +86,7 @@ export async function createSession(
       selector: refreshToken.selector,
       session_id: session.id,
       user_id: userId,
+      project_id: projectId,
       family_id: familyId,
       token_hash: await bcrypt.hash(refreshToken.verifier, REFRESH_HASH_ROUNDS),
       expires_at: expiresAt,

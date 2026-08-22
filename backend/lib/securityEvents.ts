@@ -37,6 +37,7 @@ export interface SecurityEventInput {
   type: SecurityEventType;
   userId?: string | null;
   sessionId?: string | null;
+  projectId?: string | null;
   ip?: string | null;
   userAgent?: string | null;
   /**
@@ -68,6 +69,7 @@ export async function recordSecurityEvent(
       severity: input.severity ?? SEVERITY[input.type],
       user_id: input.userId ?? null,
       session_id: input.sessionId ?? null,
+      project_id: input.projectId ?? null,
       ip: input.ip ?? null,
       user_agent: input.userAgent ?? null,
       metadata: input.metadata,

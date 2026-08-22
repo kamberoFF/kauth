@@ -1,5 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { api, resetDatabase, startTestServer, stopTestServer } from "./helpers/api";
+import {
+  api,
+  createTestProject,
+  resetDatabase,
+  startTestServer,
+  stopTestServer,
+} from "./helpers/api";
 import { prisma } from "../lib/prisma";
 import { createMemoryMailer, setMailer } from "../lib/mail";
 
@@ -11,6 +17,8 @@ const credentials = {
 
 const mailer = createMemoryMailer();
 
+let project: Awaited<ReturnType<typeof createTestProject>>;
+
 function tokenFromLastMail(to: string) {
   const mail = mailer.lastTo(to);
   const match = mail?.text.match(/token=(\S+)/);
@@ -19,7 +27,7 @@ function tokenFromLastMail(to: string) {
 }
 
 function registerUser() {
-  return api("POST", "/register", { body: credentials });
+  return api("POST", "/register", { body: credentials, projectId: project.id });
 }
 
 beforeAll(async () => {
@@ -37,6 +45,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetDatabase();
   mailer.clear();
+  project = await createTestProject();
 });
 
 describe("email verification", () => {
@@ -57,7 +66,9 @@ describe("email verification", () => {
     expect(confirmed.status).toBe(200);
 
     const user = await prisma.user.findUniqueOrThrow({
-      where: { email: credentials.email },
+      where: {
+        project_id_email: { project_id: project.id, email: credentials.email },
+      },
     });
     expect(user.email_verified).toBe(true);
 
@@ -78,6 +89,7 @@ describe("email verification", () => {
   it("answers identically for an unregistered address and sends nothing", async () => {
     const response = await api("POST", "/send-verification-email", {
       body: { email: "nobody@example.com" },
+      projectId: project.id,
     });
 
     expect(response.status).toBe(202);
@@ -90,6 +102,7 @@ describe("email verification", () => {
 
     await api("POST", "/send-verification-email", {
       body: { email: credentials.email },
+      projectId: project.id,
     });
     const second = tokenFromLastMail(credentials.email)!;
 
@@ -114,6 +127,7 @@ describe("password reset", () => {
 
     await api("POST", "/forgot-password", {
       body: { email: credentials.email },
+      projectId: project.id,
     });
 
     return tokenFromLastMail(credentials.email)!;
@@ -131,6 +145,7 @@ describe("password reset", () => {
   it("answers identically for an unregistered address", async () => {
     const response = await api("POST", "/forgot-password", {
       body: { email: "nobody@example.com" },
+      projectId: project.id,
     });
 
     expect(response.status).toBe(202);
@@ -147,11 +162,13 @@ describe("password reset", () => {
 
     const withOld = await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },
+      projectId: project.id,
     });
     expect(withOld.status).toBe(401);
 
     const withNew = await api("POST", "/login", {
       body: { email: credentials.email, password: newPassword },
+      projectId: project.id,
     });
     expect(withNew.status).toBe(200);
   });
@@ -161,6 +178,7 @@ describe("password reset", () => {
     mailer.clear();
     await api("POST", "/forgot-password", {
       body: { email: credentials.email },
+      projectId: project.id,
     });
     const token = tokenFromLastMail(credentials.email)!;
 
@@ -186,7 +204,9 @@ describe("password reset", () => {
     });
 
     const user = await prisma.user.findUniqueOrThrow({
-      where: { email: credentials.email },
+      where: {
+        project_id_email: { project_id: project.id, email: credentials.email },
+      },
     });
     expect(user.email_verified).toBe(true);
   });
@@ -261,6 +281,7 @@ describe("password change", () => {
 
     const withNew = await api("POST", "/login", {
       body: { email: credentials.email, password: newPassword },
+      projectId: project.id,
     });
     expect(withNew.status).toBe(200);
 

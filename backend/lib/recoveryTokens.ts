@@ -26,6 +26,7 @@ function hashToken(token: string) {
 export async function issueRecoveryToken(
   userId: string,
   type: TokenType,
+  projectId: string,
   client: DbClient = prisma,
 ) {
   const token = crypto.randomBytes(TOKEN_BYTES).toString("base64url");
@@ -40,6 +41,7 @@ export async function issueRecoveryToken(
   await client.recoveryToken.create({
     data: {
       user_id: userId,
+      project_id: projectId,
       token_type: type,
       token_hash: hashToken(token),
       expires_at: new Date(now.getTime() + TTL_MS[type]),

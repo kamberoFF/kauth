@@ -1,6 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { OAuth2Tokens } from "arctic";
-import { api, resetDatabase, startTestServer, stopTestServer } from "./helpers/api";
+import {
+  api,
+  createTestProject,
+  resetDatabase,
+  startTestServer,
+  stopTestServer,
+} from "./helpers/api";
 import { prisma } from "../lib/prisma";
 import {
   registerOAuthProvider,
@@ -10,6 +16,8 @@ import {
 
 const PROVIDER_ID = "stub";
 const VALID_CODE = "valid-authorization-code";
+
+let project: Awaited<ReturnType<typeof createTestProject>>;
 
 /**
  * Stands in for a real provider so the whole redirect round trip can be
@@ -64,6 +72,7 @@ beforeEach(async () => {
     name: "Ada Lovelace",
     image: "https://example.com/avatar.png",
   };
+  project = await createTestProject();
 });
 
 function cookieHeader(response: { headers: Headers }) {
@@ -79,9 +88,11 @@ function stateFrom(response: { headers: Headers }) {
 }
 
 async function startFlow() {
-  const started = await api("GET", `/oauth/${PROVIDER_ID}`, {
-    redirect: "manual",
-  });
+  const started = await api(
+    "GET",
+    `/oauth/${PROVIDER_ID}?projectId=${project.id}`,
+    { redirect: "manual" },
+  );
 
   return { state: stateFrom(started), cookie: cookieHeader(started) };
 }
@@ -123,9 +134,11 @@ describe("provider discovery", () => {
 
 describe("authorization redirect", () => {
   it("redirects to the provider and remembers the state", async () => {
-    const response = await api("GET", `/oauth/${PROVIDER_ID}`, {
-      redirect: "manual",
-    });
+    const response = await api(
+      "GET",
+      `/oauth/${PROVIDER_ID}?projectId=${project.id}`,
+      { redirect: "manual" },
+    );
 
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toContain("provider.example");
@@ -182,7 +195,9 @@ describe("callback", () => {
     expect(result.code).toBeString();
 
     const user = await prisma.user.findUniqueOrThrow({
-      where: { email: "social@example.com" },
+      where: {
+        project_id_email: { project_id: project.id, email: "social@example.com" },
+      },
       include: { accounts: true },
     });
 
@@ -211,7 +226,7 @@ describe("account linking", () => {
   };
 
   it("links to an existing account when the provider verified the email", async () => {
-    await api("POST", "/register", { body: credentials });
+    await api("POST", "/register", { body: credentials, projectId: project.id });
 
     const result = await completeFlow();
     expect(result.code).toBeString();
@@ -219,7 +234,9 @@ describe("account linking", () => {
     expect(await prisma.user.count()).toBe(1);
 
     const user = await prisma.user.findUniqueOrThrow({
-      where: { email: credentials.email },
+      where: {
+        project_id_email: { project_id: project.id, email: credentials.email },
+      },
       include: { accounts: true },
     });
 
@@ -235,7 +252,7 @@ describe("account linking", () => {
   });
 
   it("refuses to link when the provider has not verified the email", async () => {
-    await api("POST", "/register", { body: credentials });
+    await api("POST", "/register", { body: credentials, projectId: project.id });
     profile = { ...profile, emailVerified: false };
 
     const result = await completeFlow();

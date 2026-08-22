@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 import {
   api,
   cookieClient,
+  createTestProject,
   resetDatabase,
   startTestServer,
   stopTestServer,
@@ -13,24 +14,30 @@ const credentials = {
   password: "correct-horse-battery",
 };
 
+let project: Awaited<ReturnType<typeof createTestProject>>;
+
 /**
  * Registers through the bearer contract so each test starts from a clean jar and
  * exercises only the flow it is about.
  */
 function registerUser() {
-  return api("POST", "/register", { body: credentials });
+  return api("POST", "/register", { body: credentials, projectId: project.id });
 }
 
 function login(client: ReturnType<typeof cookieClient>, csrfToken: string) {
   return client.request("POST", "/login", {
     csrfToken,
     body: { email: credentials.email, password: credentials.password },
+    projectId: project.id,
   });
 }
 
 beforeAll(startTestServer);
 afterAll(stopTestServer);
 beforeEach(resetDatabase);
+beforeEach(async () => {
+  project = await createTestProject();
+});
 
 describe("cookie transport", () => {
   it("sets both cookies and withholds the tokens from the body", async () => {

@@ -1,12 +1,15 @@
+import crypto from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import {
   api,
+  createTestProject,
   resetDatabase,
   startTestServer,
   stopTestServer,
   TEST_DEVICE_ID,
 } from "./helpers/api";
 import { prisma } from "../lib/prisma";
+import { generateTokens } from "../lib/jwt";
 
 const OTHER_DEVICE_ID = "9f8e7d6c-5b4a-4392-8172-6f5e4d3c2b1a";
 
@@ -16,13 +19,21 @@ const credentials = {
   password: "correct-horse-battery",
 };
 
+let project: Awaited<ReturnType<typeof createTestProject>>;
+
 function registerUser(overrides: Record<string, unknown> = {}) {
-  return api("POST", "/register", { body: { ...credentials, ...overrides } });
+  return api("POST", "/register", {
+    body: { ...credentials, ...overrides },
+    projectId: project.id,
+  });
 }
 
 beforeAll(startTestServer);
 afterAll(stopTestServer);
 beforeEach(resetDatabase);
+beforeEach(async () => {
+  project = await createTestProject();
+});
 
 describe("POST /register", () => {
   it("creates a user and issues a token pair", async () => {
@@ -38,7 +49,9 @@ describe("POST /register", () => {
     await registerUser();
 
     const user = await prisma.user.findUniqueOrThrow({
-      where: { email: credentials.email },
+      where: {
+        project_id_email: { project_id: project.id, email: credentials.email },
+      },
       include: { accounts: true },
     });
 
@@ -86,6 +99,7 @@ describe("POST /register", () => {
   it("requires a well-formed device header", async () => {
     const absent = await api("POST", "/register", {
       body: credentials,
+      projectId: project.id,
       deviceId: null,
     });
     expect(absent.status).toBe(400);
@@ -93,10 +107,31 @@ describe("POST /register", () => {
 
     const malformed = await api("POST", "/register", {
       body: credentials,
+      projectId: project.id,
       deviceId: "not-a-uuid",
     });
     expect(malformed.status).toBe(400);
     expect(malformed.body.error.code).toBe("device_id_invalid");
+  });
+
+  it("requires a well-formed project header", async () => {
+    const absent = await api("POST", "/register", { body: credentials });
+    expect(absent.status).toBe(400);
+    expect(absent.body.error.code).toBe("project_id_missing");
+
+    const malformed = await api("POST", "/register", {
+      body: credentials,
+      headers: { "x-project-id": "not-a-uuid" },
+    });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.error.code).toBe("project_id_invalid");
+
+    const unknown = await api("POST", "/register", {
+      body: credentials,
+      headers: { "x-project-id": "3f1a2b4c-5d6e-4f80-9a1b-2c3d4e5f6071" },
+    });
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.error.code).toBe("project_not_found");
   });
 });
 
@@ -108,6 +143,7 @@ describe("POST /login", () => {
   it("issues tokens for valid credentials", async () => {
     const response = await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },
+      projectId: project.id,
     });
 
     expect(response.status).toBe(200);
@@ -118,6 +154,7 @@ describe("POST /login", () => {
   it("rejects a wrong password", async () => {
     const response = await api("POST", "/login", {
       body: { email: credentials.email, password: "wrong-password-here" },
+      projectId: project.id,
     });
 
     expect(response.status).toBe(401);
@@ -127,6 +164,7 @@ describe("POST /login", () => {
   it("rejects an unknown account with the same response as a wrong password", async () => {
     const response = await api("POST", "/login", {
       body: { email: "nobody@example.com", password: credentials.password },
+      projectId: project.id,
     });
 
     expect(response.status).toBe(401);
@@ -136,6 +174,7 @@ describe("POST /login", () => {
   it("revokes the previous session for the same device instead of deleting it", async () => {
     await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },
+      projectId: project.id,
     });
 
     const sessions = await prisma.session.findMany({
@@ -280,6 +319,121 @@ describe("POST /logout", () => {
       body: { refreshToken: registered.body.refreshToken },
     });
     expect(refreshed.status).toBe(401);
+  });
+});
+
+describe("multi-tenant isolation", () => {
+  it("lets the same email register independently in two projects", async () => {
+    const otherProject = await createTestProject({ name: "Other Project" });
+
+    const first = await registerUser();
+    const second = await api("POST", "/register", {
+      body: credentials,
+      projectId: otherProject.id,
+    });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.body.user.id).not.toBe(first.body.user.id);
+    expect(await prisma.user.count()).toBe(2);
+  });
+
+  it("only logs in against the project the account belongs to", async () => {
+    const otherProject = await createTestProject({ name: "Other Project" });
+    await registerUser();
+
+    const response = await api("POST", "/login", {
+      body: { email: credentials.email, password: credentials.password },
+      projectId: otherProject.id,
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("auth_failed");
+  });
+
+  it("rejects an access token from one project against another project's session", async () => {
+    const otherProject = await createTestProject({ name: "Other Project" });
+    const registered = await registerUser();
+
+    const session = await prisma.session.findFirstOrThrow({
+      where: { user_id: registered.body.user.id },
+    });
+
+    // A validly signed token whose projectId claim disagrees with the
+    // session it names — the direct proof for requireAuth's project check.
+    const forged = generateTokens({
+      userId: registered.body.user.id,
+      familyId: crypto.randomUUID(),
+      sessionId: session.id,
+      projectId: otherProject.id,
+    });
+
+    const response = await api("GET", "/protected", {
+      accessToken: forged.accessToken.token,
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("token_invalid");
+  });
+
+  it("rotates and revokes refresh tokens independently per project", async () => {
+    const otherProject = await createTestProject({ name: "Other Project" });
+
+    const registeredA = await registerUser();
+    const registeredB = await api("POST", "/register", {
+      body: credentials,
+      projectId: otherProject.id,
+    });
+
+    // Trigger reuse detection in project A by replaying its rotated token.
+    const rotatedA = await api("POST", "/refresh", {
+      body: { refreshToken: registeredA.body.refreshToken },
+    });
+    expect(rotatedA.status).toBe(200);
+
+    const replayA = await api("POST", "/refresh", {
+      body: { refreshToken: registeredA.body.refreshToken },
+    });
+    expect(replayA.status).toBe(401);
+    expect(replayA.body.error.code).toBe("token_reused");
+
+    // Project B's identical-email session must be entirely unaffected.
+    const rotatedB = await api("POST", "/refresh", {
+      body: { refreshToken: registeredB.body.refreshToken },
+    });
+    expect(rotatedB.status).toBe(200);
+
+    const sessionB = await prisma.session.findFirstOrThrow({
+      where: { user_id: registeredB.body.user.id },
+    });
+    expect(sessionB.status).toBe("ACTIVE");
+  });
+
+  it("logs out only the project it was called for", async () => {
+    const otherProject = await createTestProject({ name: "Other Project" });
+
+    const registeredA = await registerUser();
+    const registeredB = await api("POST", "/register", {
+      body: credentials,
+      projectId: otherProject.id,
+    });
+
+    const logoutResponse = await api("POST", "/logout", {
+      accessToken: registeredA.body.accessToken,
+    });
+    expect(logoutResponse.status).toBe(200);
+
+    const protectedA = await api("GET", "/protected", {
+      accessToken: registeredA.body.accessToken,
+    });
+    expect(protectedA.status).toBe(401);
+    expect(protectedA.body.error.code).toBe("session_revoked");
+
+    // Project B's identical-email session must still be usable.
+    const protectedB = await api("GET", "/protected", {
+      accessToken: registeredB.body.accessToken,
+    });
+    expect(protectedB.status).toBe(200);
   });
 });
 

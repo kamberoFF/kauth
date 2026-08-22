@@ -7,17 +7,56 @@ datasource db {
   provider = "postgresql"
 }
 
+model Project {
+
+  id   String @id @default(uuid()) @db.Uuid
+  name String
+
+  /**
+   * Per-project CORS/CSRF allowlist. Replaces the single global
+   * config.trusted_origins once a project can configure its own — not wired
+   * into requireTrustedOrigin/app.ts's cors() yet, that's a later ticket.
+   */
+  trusted_origins String[] @default([])
+
+  /**
+   * Nullable: no owner concept exists until the developer-facing auth
+   * bootstrap (ticket 03) creates the reserved platform project and its
+   * operator accounts. Projects created directly for test/seed purposes
+   * before then simply have no owner.
+   */
+  owner    User?   @relation("ProjectOwner", fields: [owner_id], references: [id], onDelete: SetNull)
+  owner_id String? @db.Uuid
+
+  users          User[]
+  accounts       Account[]
+  sessions       Session[]
+  refreshTokens  RefreshToken[]
+  recoveryTokens RecoveryToken[]
+  securityEvents SecurityEvent[]
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([owner_id])
+  @@map("projects")
+}
+
 model User {
 
-  id    String @id @default(uuid()) @db.Uuid
-  email String @unique
+  id String @id @default(uuid()) @db.Uuid
+
+  project    Project @relation(fields: [project_id], references: [id], onDelete: Restrict)
+  project_id String  @db.Uuid
+
+  email String
 
   /**
    * Optional because social signups have no username until the user picks one.
    * Postgres allows many NULLs under a unique index, so uniqueness still holds
    * for the users who do have one.
    */
-  username String? @unique
+  username String?
 
   email_verified Boolean @default(false)
 
@@ -31,10 +70,19 @@ model User {
   recoveryTokens RecoveryToken[]
   securityEvents SecurityEvent[]
 
+  /**
+   * Projects this user owns as a developer/operator. Populated starting with
+   * ticket 03 — always empty for ordinary end users.
+   */
+  ownedProjects Project[] @relation("ProjectOwner")
+
   created_at    DateTime       @default(now())
   updated_at    DateTime       @updatedAt
   refreshTokens RefreshToken[]
 
+  @@unique([project_id, email])
+  @@unique([project_id, username])
+  @@index([project_id])
   @@map("users")
 }
 
@@ -50,6 +98,9 @@ model Account {
 
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   user_id String @db.Uuid
+
+  project    Project @relation(fields: [project_id], references: [id], onDelete: Restrict)
+  project_id String  @db.Uuid
 
   /**
    * "credential" for email+password, otherwise the provider key ("google").
@@ -76,9 +127,10 @@ model Account {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
-  @@unique([provider_id, account_id])
+  @@unique([project_id, provider_id, account_id])
   @@unique([user_id, provider_id])
   @@index([user_id])
+  @@index([project_id])
   @@map("accounts")
 }
 
@@ -87,6 +139,9 @@ model Session {
   id      String @id @default(uuid()) @db.Uuid
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   user_id String @db.Uuid
+
+  project    Project @relation(fields: [project_id], references: [id], onDelete: Restrict)
+  project_id String  @db.Uuid
 
   /**
    * One logical login/browser profile/device session.
@@ -149,6 +204,7 @@ model Session {
   @@index([user_id, status])
   @@index([device_id])
   @@index([last_used_at])
+  @@index([project_id])
   @@map("sessions")
 }
 
@@ -162,6 +218,9 @@ model RefreshToken {
 
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   user_id String @db.Uuid
+
+  project    Project @relation(fields: [project_id], references: [id], onDelete: Restrict)
+  project_id String  @db.Uuid
 
   /**
    * All rotated tokens for one session share this family_id.
@@ -198,6 +257,7 @@ model RefreshToken {
   @@index([family_id])
   @@index([status])
   @@index([expires_at])
+  @@index([project_id])
   @@map("refresh_tokens")
 }
 
@@ -231,6 +291,9 @@ model RecoveryToken {
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   user_id String @db.Uuid
 
+  project    Project @relation(fields: [project_id], references: [id], onDelete: Restrict)
+  project_id String  @db.Uuid
+
   /**
    * Same idea: opaque random token, store hash.
    * Do NOT store raw password reset/email confirmation tokens.
@@ -247,6 +310,7 @@ model RecoveryToken {
   @@index([token_hash])
   @@index([token_type])
   @@index([expires_at])
+  @@index([project_id])
   @@map("recovery_tokens")
 }
 
@@ -259,6 +323,9 @@ model SecurityEvent {
 
   session    Session? @relation(fields: [session_id], references: [id], onDelete: SetNull)
   session_id String?      @db.Uuid
+
+  project    Project? @relation(fields: [project_id], references: [id], onDelete: SetNull)
+  project_id String?  @db.Uuid
 
   event_type SecurityEventType
   severity   SecurityEventSeverity @default(INFO)
@@ -274,6 +341,7 @@ model SecurityEvent {
   @@index([session_id])
   @@index([event_type])
   @@index([created_at])
+  @@index([project_id])
   @@map("security_events")
 }
 
