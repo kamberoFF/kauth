@@ -8,12 +8,14 @@ import accountRoutes from "./routes/account";
 import oauthRoutes from "./routes/oauth";
 import sessionsRoutes from "./routes/sessions";
 import projectsRoutes from "./routes/projects";
+import projectAccessRoutes from "./routes/projectAccess";
 import { requireAuth } from "./middlewares/auth";
 import { errorHandler, notFoundHandler } from "./middlewares/error";
 import { globalLimiter } from "./middlewares/rateLimit";
 import { requireTrustedOrigin } from "./middlewares/origin";
 import { issueCsrfToken, requireCsrfToken } from "./middlewares/csrf";
 import {
+  API_KEY_HEADER,
   CSRF_TOKEN_HEADER,
   DEVICE_ID_HEADER,
   PROJECT_ID_HEADER,
@@ -56,6 +58,7 @@ app.use(
       DEVICE_ID_HEADER,
       PROJECT_ID_HEADER,
       TOKEN_RESPONSE_HEADER,
+      API_KEY_HEADER,
     ],
   }),
 );
@@ -77,6 +80,7 @@ app.use(accountRoutes);
 app.use(oauthRoutes);
 app.use(sessionsRoutes);
 app.use(projectsRoutes);
+app.use(projectAccessRoutes);
 
 app.get("/protected", requireAuth, (req, res) => {
   res.json({ message: "Authorized", userId: req.userId });

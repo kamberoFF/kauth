@@ -1,6 +1,7 @@
 export const DEVICE_ID_HEADER = "x-device-id" as const;
 export const PROJECT_ID_HEADER = "x-project-id" as const;
 export const CSRF_TOKEN_HEADER = "x-csrf-token" as const;
+export const API_KEY_HEADER = "x-api-key" as const;
 
 /**
  * Opts a client out of cookie-only transport. Cookies are always set; sending

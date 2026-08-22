@@ -1,6 +1,8 @@
 import type { Server } from "node:http";
 import app from "../../app";
 import { prisma } from "../../lib/prisma";
+import { ensurePlatformProject } from "../../lib/platformProject";
+import { PLATFORM_PROJECT_ID } from "../../constants/platform";
 
 export const TEST_DEVICE_ID = "3f1a2b4c-5d6e-4f80-9a1b-2c3d4e5f6071";
 
@@ -44,6 +46,7 @@ interface ApiOptions {
   deviceId?: string | null;
   projectId?: string;
   accessToken?: string;
+  apiKey?: string;
   headers?: Record<string, string>;
   redirect?: "follow" | "manual" | "error";
 }
@@ -71,6 +74,10 @@ export async function api<T = any>(
 
   if (options.accessToken) {
     headers["authorization"] = `Bearer ${options.accessToken}`;
+  }
+
+  if (options.apiKey) {
+    headers["x-api-key"] = options.apiKey;
   }
 
   const response = await fetch(`${baseUrl}${path}`, {
@@ -209,4 +216,40 @@ export async function createTestProject(overrides?: { name?: string }) {
   return prisma.project.create({
     data: { name: overrides?.name ?? "Test Project" },
   });
+}
+
+/**
+ * The bootstrap flow ticket 03 built (register a developer into the reserved
+ * platform project, log in, create a project through the session), reused
+ * here since key-issuance/API-key-auth tests need a fresh owned project
+ * repeatedly. Each call registers a distinct developer so tests can create
+ * two owners for isolation assertions without colliding on email/username.
+ */
+export async function createOwnedProject(overrides?: { projectName?: string }) {
+  await ensurePlatformProject();
+
+  const suffix = crypto.randomUUID();
+  const credentials = {
+    email: `owner-${suffix}@example.com`,
+    username: `owner-${suffix.slice(0, 8)}`,
+    password: "correct-horse-battery",
+  };
+
+  const registered = await api("POST", "/register", {
+    body: credentials,
+    projectId: PLATFORM_PROJECT_ID,
+  });
+
+  const created = await api("POST", "/projects", {
+    body: { name: overrides?.projectName ?? "Owned Project" },
+    accessToken: registered.body.accessToken,
+  });
+
+  return {
+    project: created.body as { id: string; name: string; ownerId: string },
+    developer: {
+      userId: registered.body.user.id as string,
+      accessToken: registered.body.accessToken as string,
+    },
+  };
 }

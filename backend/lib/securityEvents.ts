@@ -32,6 +32,8 @@ const SEVERITY: Record<SecurityEventType, SecurityEventSeverity> = {
   ACCOUNT_UNLINKED: SecurityEventSeverity.WARNING,
   CSRF_VALIDATION_FAILED: SecurityEventSeverity.WARNING,
   SUSPICIOUS_ACTIVITY: SecurityEventSeverity.CRITICAL,
+  API_KEY_ISSUED: SecurityEventSeverity.INFO,
+  API_KEY_REVOKED: SecurityEventSeverity.WARNING,
 };
 
 export interface SecurityEventInput {
