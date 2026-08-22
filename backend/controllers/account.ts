@@ -95,7 +95,12 @@ export const verifyEmail: RequestHandler = async (req, res, next) => {
       });
 
       await recordSecurityEvent(
-        { type: "EMAIL_CONFIRMED", userId: record.user_id, ...context },
+        {
+          type: "EMAIL_CONFIRMED",
+          userId: record.user_id,
+          projectId: record.project_id,
+          ...context,
+        },
         tx,
       );
     });
@@ -193,6 +198,7 @@ export const resetPassword: RequestHandler = async (req, res, next) => {
         {
           type: "PASSWORD_RESET_COMPLETED",
           userId: record.user_id,
+          projectId: record.project_id,
           ...context,
         },
         tx,
@@ -212,6 +218,7 @@ export const changePassword: RequestHandler = async (req, res, next) => {
       return next(appError(400, "Invalid input", "validation"));
 
     const userId = requireUserId(req);
+    const projectId = requireProjectId(req);
     const context = requestContext(req);
 
     const account = await prisma.account.findUnique({
@@ -242,6 +249,7 @@ export const changePassword: RequestHandler = async (req, res, next) => {
       await tryRecordSecurityEvent({
         type: "LOGIN_FAILED",
         userId,
+        projectId,
         ...context,
         metadata: { reason: "bad_password", action: "change_password" },
       });
@@ -263,7 +271,7 @@ export const changePassword: RequestHandler = async (req, res, next) => {
       await revokeSessions(tx, { user_id: userId }, "password_changed");
 
       await recordSecurityEvent(
-        { type: "PASSWORD_CHANGED", userId, ...context },
+        { type: "PASSWORD_CHANGED", userId, projectId, ...context },
         tx,
       );
     });

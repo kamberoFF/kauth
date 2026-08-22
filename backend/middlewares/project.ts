@@ -1,8 +1,6 @@
 import { type RequestHandler } from "express";
-import { UUID_REGEX } from "../constants/regex";
 import { PROJECT_ID_HEADER } from "../constants/headers";
-import { resolveProject } from "../lib/projects";
-import { appError } from "../utils/errors";
+import { resolveProjectIdOrThrow } from "../lib/projects";
 
 /**
  * Unlike requireDevice, this hits the database: a project id is a real FK
@@ -11,35 +9,10 @@ import { appError } from "../utils/errors";
  */
 export const requireProject: RequestHandler = async (req, _res, next) => {
   try {
-    const projectId = req.get(PROJECT_ID_HEADER)?.trim();
-
-    if (!projectId) {
-      return next(
-        appError(
-          400,
-          `Missing required header: ${PROJECT_ID_HEADER}`,
-          "project_id_missing",
-        ),
-      );
-    }
-
-    if (!UUID_REGEX.test(projectId)) {
-      return next(
-        appError(
-          400,
-          `Invalid ${PROJECT_ID_HEADER} format. Must be a valid UUID v4`,
-          "project_id_invalid",
-        ),
-      );
-    }
-
-    const project = await resolveProject(projectId);
-
-    if (!project) {
-      return next(appError(404, "Project not found", "project_not_found"));
-    }
-
-    req.projectId = project.id;
+    req.projectId = await resolveProjectIdOrThrow(
+      req.get(PROJECT_ID_HEADER),
+      `header: ${PROJECT_ID_HEADER}`,
+    );
     next();
   } catch (error) {
     // Express 4 does not forward a rejected promise from a middleware, so an
