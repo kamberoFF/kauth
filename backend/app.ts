@@ -16,7 +16,7 @@ import { requireTrustedOrigin } from "./middlewares/origin";
 import { requestLog } from "./middlewares/requestLog";
 import { issueCsrfToken, requireCsrfToken } from "./middlewares/csrf";
 import { prisma } from "./lib/prisma";
-import { logger } from "./lib/logger";
+import { AppError } from "./types/errors";
 import {
   API_KEY_HEADER,
   CSRF_TOKEN_HEADER,
@@ -79,15 +79,14 @@ app.get("/health", (_req, res) => res.json({ status: "ok" }));
 // Liveness above stays a static response — "the process is alive" must never
 // depend on the database. This one is real: deployment automation uses it to
 // tell "alive" apart from "can actually serve requests".
-app.get("/health/ready", async (_req, res) => {
+app.get("/health/ready", async (_req, res, next) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
     res.json({ status: "ok" });
-  } catch (error) {
-    logger.error("readiness check failed", { error });
-    res.status(503).json({
-      error: { message: "Database unavailable", code: "database_unavailable" },
-    });
+  } catch {
+    // Logged (and its error body written) by the central error handler —
+    // this endpoint does not own an error shape of its own.
+    next(new AppError(503, "Database unavailable", "database_unavailable"));
   }
 });
 

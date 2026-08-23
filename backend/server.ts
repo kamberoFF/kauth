@@ -16,11 +16,20 @@ async function applyMigrations() {
     stderr: "pipe",
   });
 
-  const exitCode = await proc.exited;
+  // Both pipes must be drained concurrently: waiting on the exit code while a
+  // full pipe buffer goes unread deadlocks boot on chatty output.
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
 
   if (exitCode !== 0) {
-    const output = await new Response(proc.stderr).text();
-    throw new Error(`prisma migrate deploy failed:\n${output}`);
+    throw new Error(`prisma migrate deploy failed:\n${stderr || stdout}`);
+  }
+
+  if (stdout.trim()) {
+    logger.info("migrations applied", { output: stdout.trim() });
   }
 }
 
