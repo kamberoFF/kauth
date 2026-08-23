@@ -13,7 +13,10 @@ import { requireAuth } from "./middlewares/auth";
 import { errorHandler, notFoundHandler } from "./middlewares/error";
 import { globalLimiter } from "./middlewares/rateLimit";
 import { requireTrustedOrigin } from "./middlewares/origin";
+import { requestLog } from "./middlewares/requestLog";
 import { issueCsrfToken, requireCsrfToken } from "./middlewares/csrf";
+import { prisma } from "./lib/prisma";
+import { logger } from "./lib/logger";
 import {
   API_KEY_HEADER,
   CSRF_TOKEN_HEADER,
@@ -26,6 +29,8 @@ const app = express();
 
 app.set("trust proxy", config.trust_proxy);
 app.disable("x-powered-by");
+
+app.use(requestLog);
 
 app.use(
   helmet({
@@ -70,6 +75,21 @@ app.use(requireTrustedOrigin);
 app.use(requireCsrfToken);
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
+
+// Liveness above stays a static response — "the process is alive" must never
+// depend on the database. This one is real: deployment automation uses it to
+// tell "alive" apart from "can actually serve requests".
+app.get("/health/ready", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: "ok" });
+  } catch (error) {
+    logger.error("readiness check failed", { error });
+    res.status(503).json({
+      error: { message: "Database unavailable", code: "database_unavailable" },
+    });
+  }
+});
 
 app.get("/csrf-token", (_req, res) => {
   res.json({ csrfToken: issueCsrfToken(res) });
