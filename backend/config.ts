@@ -67,6 +67,20 @@ const schema = z.object({
    * arrives first.
    */
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+
+  /**
+   * Governs the cleanup job (`bun run cleanup`). Kept independent of
+   * AUDIT_RETENTION_DAYS deliberately: clearing out stale refresh-token
+   * rotation debris and preserving audit/session history are different
+   * concerns operators may want on very different timelines.
+   */
+  CLEANUP_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  /**
+   * Governs SecurityEvent retention, and — coordinated, see
+   * docs/adr/0004-coordinated-session-audit-retention.md — how long a
+   * revoked/expired Session survives after nothing still references it.
+   */
+  AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -125,6 +139,8 @@ const config = {
   },
   log_level: env.LOG_LEVEL,
   shutdown_timeout_ms: env.SHUTDOWN_TIMEOUT_MS,
+  cleanup_retention_days: env.CLEANUP_RETENTION_DAYS,
+  audit_retention_days: env.AUDIT_RETENTION_DAYS,
 } as const;
 
 export default config;

@@ -12,24 +12,24 @@ multiple tickets/PRs in a way that separates it from what it protects.
 **Blocked by:** 01 (structured logging foundation) — the job's own run
 should log through the new logger from the start
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Two independently configurable retention windows exist, following
+- [x] Two independently configurable retention windows exist, following
       this repo's existing env-var/config conventions: one governing
       consumed/expired refresh tokens, one governing audit events (and, by
       extension, when a session becomes eligible for deletion) — each with
       its own sensible default, settable independently so an operator isn't
       forced to trade one off against the other
-- [ ] Cleanup runs as a discrete, externally-triggerable step (e.g. a
+- [x] Cleanup runs as a discrete, externally-triggerable step (e.g. a
       standalone script), not an always-running in-process timer inside the
       main server process
-- [ ] Running cleanup deletes consumed/expired refresh tokens older than
+- [x] Running cleanup deletes consumed/expired refresh tokens older than
       their retention window
-- [ ] Running cleanup deletes audit-log events older than their retention
+- [x] Running cleanup deletes audit-log events older than their retention
       window
-- [ ] Running cleanup deletes revoked/expired sessions, but **only** once
+- [x] Running cleanup deletes revoked/expired sessions, but **only** once
       they are older than the audit-log retention window — never before
-- [ ] **The mutation-critical guarantee**: a session that is already past
+- [x] **The mutation-critical guarantee**: a session that is already past
       its own expiry/revocation, but still has an audit-log event
       referencing it that is inside the audit retention window, is **not**
       deleted by a cleanup run. Once that referencing event itself ages out
@@ -38,6 +38,6 @@ should log through the new logger from the start
       mutation-checked (break the ordering deliberately, confirm the test
       catches it, then restore) per this repo's convention for
       security/integrity-relevant guarantees
-- [ ] Cleanup never leaves an audit-log event pointing at a session that no
+- [x] Cleanup never leaves an audit-log event pointing at a session that no
       longer exists as a side effect of running out of order
-- [ ] Running cleanup with nothing eligible is a safe no-op
+- [x] Running cleanup with nothing eligible is a safe no-op

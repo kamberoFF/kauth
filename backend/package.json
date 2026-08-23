@@ -14,6 +14,7 @@
     "prisma:reset": "bunx --bun prisma migrate reset --force",
     "prisma:generate": "bunx --bun prisma generate",
     "seed": "bun prisma/seed.ts",
+    "cleanup": "bun scripts/cleanup.ts",
     "studio": "bunx --bun prisma studio"
   },
   "devDependencies": {
