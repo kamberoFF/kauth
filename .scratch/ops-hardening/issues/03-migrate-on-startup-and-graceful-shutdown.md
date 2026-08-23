@@ -10,21 +10,21 @@ database connection instead of dropping them.
 messages should log through the new logger from the start, not be written
 once against `console.*` and reworked later
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] On startup, pending migrations are applied automatically before the
+- [x] On startup, pending migrations are applied automatically before the
       server begins accepting requests
-- [ ] A failed migration logs the failure and exits the process immediately
+- [x] A failed migration logs the failure and exits the process immediately
       — the server never begins serving traffic against a schema it failed
       to migrate
-- [ ] Starting the server against an already-up-to-date schema is a no-op
+- [x] Starting the server against an already-up-to-date schema is a no-op
       that boots normally
-- [ ] On receiving a termination signal, the server stops accepting new
+- [x] On receiving a termination signal, the server stops accepting new
       connections, allows in-flight requests to complete, then closes the
       database connection before exiting
-- [ ] If shutdown doesn't complete within a bounded timeout (a stuck
+- [x] If shutdown doesn't complete within a bounded timeout (a stuck
       connection, etc.), the process force-exits anyway rather than hanging
       indefinitely — the database connection is still given a chance to
       close first
-- [ ] Both the migration and shutdown sequences log through the new
+- [x] Both the migration and shutdown sequences log through the new
       structured logger from ticket 01, not raw `console.*`

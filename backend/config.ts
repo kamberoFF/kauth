@@ -59,6 +59,14 @@ const schema = z.object({
   GITHUB_CLIENT_SECRET: z.string().optional(),
 
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+
+  /**
+   * Bounded wait for in-flight requests to drain on SIGTERM/SIGINT before the
+   * process force-exits. A stuck connection must not be able to block
+   * `prisma.$disconnect()` long enough that an orchestrator's own SIGKILL
+   * arrives first.
+   */
+  SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -116,6 +124,7 @@ const config = {
     github: credentialPair(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET),
   },
   log_level: env.LOG_LEVEL,
+  shutdown_timeout_ms: env.SHUTDOWN_TIMEOUT_MS,
 } as const;
 
 export default config;
