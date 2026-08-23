@@ -3,16 +3,20 @@
 **Living document.** Unlike the dated audit and remediation logs, this file is
 kept current — if it disagrees with the code, the file is wrong.
 
-Last reviewed: 2026-08-22.
+Last reviewed: 2026-08-23.
 
 **Multi-tenancy pivot in progress.** As of 2026-08-22 kauth is being extended
 into a self-hosted, multi-tenant auth platform — see
 `.scratch/clerk-clone/map.md` and its `clerk-clone-foundation` tickets.
-Tickets 01–02 (the `Project` entity and project-scoping across the full auth
-surface) are done and merged; the item below still applies to everything
-built *before* this pivot started, and multi-tenancy itself is no longer
-"deliberately last" — see the map's reconciliation note for why schema work
-went ahead of the rest of this backlog.
+Tickets 01–04 (the `Project` entity, project-scoping across the full auth
+surface, developer-facing auth bootstrap, and per-project API key issuance)
+are done and merged, plus a same-day gap-closing ticket on audit-log
+project scoping and OAuth validation hygiene; the item below still applies
+to everything built *before* this pivot started, and multi-tenancy itself is
+no longer "deliberately last" — see the map's reconciliation note for why
+schema work went ahead of the rest of this backlog. Tickets 05/06 (the SDK
+packages) are next in the tracker's dependency graph, but see "Before
+starting the SDK" below — that gate is still active and unmet.
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
 That plan was written in June 2026, before any of it was built; the parts that
@@ -115,10 +119,26 @@ today's mistakes into permanent ones. Start it when all of these hold:
 - Core auth events are observable. Partly — the audit log exists, structured
   logging does not.
 - Integration tests protect the main flows. **Done.**
-- The response and error contract is versioned and consistent. Consistent, not
-  yet versioned.
+- The response and error contract is versioned and consistent. **Done**
+  2026-08-23 — see ADR 0003: an `X-Kauth-Contract-Version` header, exact-match
+  SDK enforcement, no multi-version hosting (kauth is self-hosted
+  per-operator, never one instance serving many independently-upgrading
+  callers). Not yet implemented in code — the decision is recorded, the
+  header/check itself still needs building (part of tickets 05/06, since
+  it's the SDKs that enforce it).
 
-So: after the operations work, plus a decision on API versioning.
+So: after the operations work. (The versioning decision itself is done; see
+above — what's left of this gate is the operations backlog.)
+
+**Confirmed via `/domain-modeling` 2026-08-23.** Tickets 05/06 (backend and
+client SDK packages) show as `ready-for-agent` in
+`.scratch/clerk-clone-foundation/issues/` — their only *ticket-tracker*
+blocker (04, API key issuance) is done — but that graph doesn't encode this
+gate. Operations hardening (section "1. Operations" above) still hasn't
+happened, so it remains a real, deliberate blocker on 05 and 06 beyond what
+the ticket tracker shows, not a stale leftover from before the pivot.
+Revisit only by explicitly re-deciding this, not by treating "04 is done" as
+sufficient.
 
 ## Deliberately not doing
 

@@ -14,3 +14,14 @@ developers verify tokens themselves (`docs/roadmap.md`'s asymmetric-signing
 item, "if other services ever need to verify tokens without sharing the
 secret") — that's the point at which a shared symmetric secret stops being
 tenable.
+
+**Update, 2026-08-23:** ticket 04 shipped per-project API keys, satisfying
+the first half of this trigger. The second half has not happened: the
+backend SDK (ticket 05) deliberately verifies sessions by calling kauth's
+own API rather than decoding the JWT locally, so outside developers still
+aren't verifying tokens themselves. Confirmed with the project owner that
+the trigger is a genuine AND, not satisfied by API-key issuance alone — this
+ADR's decision stands. Revisit only if a future ticket has a service verify
+a kauth-issued token without going through kauth's API (e.g. local/offline
+verification), not on any ticket that merely issues or authenticates with
+API keys.
