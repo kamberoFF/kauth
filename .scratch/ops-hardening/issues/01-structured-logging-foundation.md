@@ -9,7 +9,7 @@ written twice.
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] A new logger utility produces one JSON object per line on stdout, with
       a `level` field and a message, no logging library dependency

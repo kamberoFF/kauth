@@ -24,6 +24,7 @@ import {
 } from "../lib/securityEvents";
 import { oauthExchangeSchema } from "../lib/validation";
 import { sendAuthResponse } from "../lib/tokenTransport";
+import { logger } from "../lib/logger";
 
 const STATE_COOKIE = "kauth_oauth_state";
 const VERIFIER_COOKIE = "kauth_oauth_verifier";
@@ -332,7 +333,7 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
       return await fail(String((error as { code?: string }).code ?? "oauth_failed"));
     }
 
-    console.error(`[oauth] ${providerId} callback failed`, error);
+    logger.error("oauth callback failed", { providerId, error });
     await fail("oauth_failed");
   }
 };

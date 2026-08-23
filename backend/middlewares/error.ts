@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { Prisma } from "../generated/prisma/client";
 import config from "../config";
 import { AppError } from "../types/errors";
+import { logger } from "../lib/logger";
 
 const isProduction = config.node_env === "production";
 
@@ -54,7 +55,12 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
   const normalized = normalize(err);
 
   if (normalized.statusCode >= 500) {
-    console.error(`[error] ${req.method} ${req.originalUrl}`, err);
+    logger.error("unhandled request error", {
+      requestId: req.requestId,
+      method: req.method,
+      route: req.originalUrl,
+      error: err,
+    });
   }
 
   res.status(normalized.statusCode).json({

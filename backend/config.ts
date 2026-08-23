@@ -57,6 +57,8 @@ const schema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -113,6 +115,7 @@ const config = {
     google: credentialPair(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET),
     github: credentialPair(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET),
   },
+  log_level: env.LOG_LEVEL,
 } as const;
 
 export default config;

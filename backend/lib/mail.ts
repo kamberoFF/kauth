@@ -1,4 +1,5 @@
 import config from "../config";
+import { logger } from "./logger";
 
 export interface Mail {
   to: string;
@@ -13,13 +14,19 @@ export interface Mailer {
 /**
  * kauth does not pick an email provider for you. The default transport prints
  * to stdout so the local flows are complete and inspectable; a deployment
- * swaps in its own transport with setMailer at startup.
+ * swaps in its own transport with setMailer at startup. This is the one
+ * logger call site that deliberately includes a token: the printed body
+ * *is* the delivery channel here, standing in for a real inbox, not an
+ * observability log — a real transport delivers out-of-band and never logs
+ * the body at all.
  */
 export const consoleMailer: Mailer = {
   async send(mail) {
-    console.log(
-      `[mail] to=${mail.to} subject=${JSON.stringify(mail.subject)}\n${mail.text}`,
-    );
+    logger.info("mail sent (dev console transport)", {
+      to: mail.to,
+      subject: mail.subject,
+      body: mail.text,
+    });
   },
 };
 
@@ -60,7 +67,7 @@ export async function sendMail(mail: Mail) {
   try {
     await mailer.send(mail);
   } catch (error) {
-    console.error(`[mail] failed to send to ${mail.to}`, error);
+    logger.error("failed to send mail", { to: mail.to, error });
   }
 }
 

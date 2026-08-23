@@ -1,5 +1,6 @@
 import type { Request } from "express";
 import { prisma } from "./prisma";
+import { logger } from "./logger";
 import type { Prisma } from "../generated/prisma/client";
 import {
   SecurityEventSeverity,
@@ -91,6 +92,6 @@ export async function tryRecordSecurityEvent(
   try {
     await recordSecurityEvent(input, client);
   } catch (error) {
-    console.error(`[audit] failed to record ${input.type}`, error);
+    logger.error("failed to record security event", { eventType: input.type, error });
   }
 }
