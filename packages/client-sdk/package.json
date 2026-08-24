@@ -1,6 +1,6 @@
 {
   "name": "@kauth/client-sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Browser/mobile-safe kauth SDK: headless sign-up, sign-in, sign-out, and a reactive session hook, authenticated with a project's publishable key.",
   "type": "module",
   "main": "./src/index.ts",

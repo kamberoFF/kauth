@@ -1,9 +1,9 @@
 import "dotenv/config";
 import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import bcrypt from "bcrypt";
 import { Role } from "../generated/prisma/client";
 import { CREDENTIAL_PROVIDER } from "../constants/providers";
+import { hashPassword } from "../lib/passwords";
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
@@ -27,7 +27,7 @@ async function main() {
     {
       email: "admin@example.com",
       username: "admin",
-      password: "password123",
+      password: "change-me-in-dev-only",
       first_name: "Admin",
       last_name: "User",
       role: Role.ADMIN,
@@ -35,7 +35,7 @@ async function main() {
     {
       email: "demo@example.com",
       username: "demo",
-      password: "password123",
+      password: "change-me-in-dev-only",
       first_name: "Demo",
       last_name: "User",
       role: Role.USER,
@@ -43,7 +43,7 @@ async function main() {
   ] as const;
 
   for (const demo of demoUsers) {
-    const passwordHash = await bcrypt.hash(demo.password, 10);
+    const passwordHash = await hashPassword(demo.password);
     const profile = {
       username: demo.username,
       first_name: demo.first_name,

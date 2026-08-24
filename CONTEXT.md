@@ -42,3 +42,15 @@ random UUID was a risk signal doing an auth decision's job), and not a
 fingerprint: it identifies an installation, not a person or physical device.
 _Avoid_: device fingerprint; "client-supplied device id" (obsolete — the
 server owns issuance now).
+
+**Password policy**:
+The minimum length a password must clear whenever it is set (registration,
+change, reset). One Project-wide number per Project, with a deployment-wide
+default beneath it. It governs only the act of setting a credential — login
+carries no floor, so an older shorter credential can still sign in and be
+rotated. Deliberately length-only: complexity rules and breach checking were
+considered and declined. Never configurable from a browser: the Client SDK
+can only ever be told what today's floor is; changing it requires the
+Project owner's authenticated session.
+_Avoid_: password rules, complexity requirements (not offered); "login
+password validation" (login does not enforce this).

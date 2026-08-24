@@ -16,9 +16,11 @@ audit-log project scoping and OAuth validation hygiene. The ops-hardening
 tickets (structured logging, migrate-on-startup/graceful shutdown,
 liveness-readiness split, non-root container, cleanup job) landed the same
 week, closing the "Operations" item below; the login timing oracle is closed;
-the dead `csrf_tokens` table is dropped; and session policy
+the dead `csrf_tokens` table is dropped; session policy
 (server-issued device identity, sliding expiry, inactivity timeout) shipped
-2026-08-24. **Next up: password hashing**, then multi-instance readiness.
+2026-08-24; and password hashing moved to Argon2id with a per-Project
+password policy on 2026-08-24 (see "Password hashing" below). **Next up:
+multi-instance readiness.**
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
 That plan was written in June 2026, before any of it was built; the parts that
@@ -57,7 +59,7 @@ Enough context to read the rest of this file.
   (`SESSION_INACTIVITY_DAYS`, default 14) rejects idle sessions.
 - **Audit log** — `security_events` written for every auth-relevant transition,
   with severity derived from the event type rather than the call site.
-- **Verification** — 247 integration tests against real Postgres covering abuse
+- **Verification** — 264 integration tests against real Postgres covering abuse
   cases (reuse, revoked-session access, throttling, device mismatch, CSRF), run
   in CI alongside typecheck, lint, and `bun audit`.
 
@@ -72,12 +74,24 @@ healthcheck, migrate-on-startup with bounded graceful shutdown, structured
 logging with request/user/session correlation, liveness/readiness split, and
 the coordinated session/audit cleanup job (ADR 0004).
 
-### 2. Password hashing
+### 2. Password hashing — done 2026-08-24
 
-- Move to Argon2id, benchmarked to 250–400 ms on the deployment target.
-- Migrate transparently by rehashing on successful login.
-- Raise the minimum length toward NIST-4's 15 characters for single-factor, and
-  add an HIBP breach check. The 72-byte cap can go once bcrypt does.
+Shipped in one pass: passwords hash with **Argon2id via `Bun.password`**
+(128 MiB / t=3, ~320 ms per hash on the reference hardware; bcrypt remains
+only for high-entropy verifiers — refresh tokens, API keys, single-use
+tokens). The 72-byte input cap and the rehash-on-login migration were both
+mooted by purging dev data before any deployment exists. The login timing
+defense carries over unchanged (dummy Argon2id comparison for unknown
+accounts).
+
+Alongside it: a **per-Project password policy** — optional
+`min_password_length` (8–128) settable at `POST /projects` and changeable by
+the owner via `PATCH /projects/:id`; unset falls back to the
+`PASSWORD_MIN_LENGTH` env default of 15. Login deliberately has no floor, so
+a legacy shorter credential can still sign in. HIBP breach checking was
+**declined** (product decision: availability over a third-party dependency,
+not deferred). Contract version bumped to 0.3.0 (creation shape grew, new
+PATCH route).
 
 ### 3. Close the identity oracles — login timing closed 2026-08-24
 
@@ -132,9 +146,27 @@ through ADR 0003's version-bump discipline rather than this gate.
 - **Becoming an OIDC provider.** kauth authenticates users for first-party
   apps; it is not an identity provider other applications integrate against.
   This is a product decision, not a backlog item.
+- **HIBP breach checking on passwords.** Declined 2026-08-24 alongside the
+  Argon2id move: an auth service whose signup dies because a third-party API
+  is down is an availability bug, and the check was defense-in-depth rather
+  than the gate. Revisit only as an opt-in per-Project feature.
 - **A DB-backed CSRF token.** The stateless signed approach is no weaker and
   costs no query. The leftover `csrf_tokens` table was dead schema and was
   dropped 2026-08-24 (tracker-hygiene ticket 01).
 - **Caching the session lookup in `requireAuth`.** A cache reintroduces exactly
   the staleness window that binding tokens to sessions closed. Revisit only if
   profiling shows a real problem.
+
+## Long-term direction
+
+Recorded so future sessions don't design against it by accident:
+
+- **Admin dashboard over `backend-sdk`.** The self-hosted management UI —
+  Projects, rules, keys, audit views — is a skin over the same SECRET-key API
+  calls operators make today. Nothing blocks it; it has simply not been built.
+- **Per-Project databases eventually supersede the shared-table model**
+  (ADR 0001), because the dashboard's natural end state — per-Project schema
+  management — needs tenant-owned DDL blast radius. Deferred until that work
+  starts; database-per-tenant vs schema-per-tenant deliberately undecided.
+  Until then, schema is owned by the server alone: Projects configure
+  behaviour through row-level settings (e.g. password policy), never DDL.

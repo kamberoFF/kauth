@@ -1,5 +1,4 @@
 import { type RequestHandler } from "express";
-import bcrypt from "bcrypt";
 import { prisma } from "../lib/prisma";
 import {
   changePasswordSchema,
@@ -13,6 +12,7 @@ import { CREDENTIAL_PROVIDER } from "../constants/providers";
 import {
   consumeRecoveryToken,
   issueRecoveryToken,
+  peekRecoveryToken,
 } from "../lib/recoveryTokens";
 import {
   passwordResetEmail,
@@ -20,7 +20,12 @@ import {
   verificationEmail,
 } from "../lib/mail";
 import { revokeSessions } from "../lib/sessions";
-import { hashPassword } from "../lib/passwords";
+import {
+  hashPassword,
+  minPasswordLength,
+  projectPasswordFloor,
+  verifyPassword,
+} from "../lib/passwords";
 import {
   recordSecurityEvent,
   requestContext,
@@ -152,6 +157,21 @@ export const resetPassword: RequestHandler = async (req, res, next) => {
 
     const context = requestContext(req);
     // Hashed before the transaction so the work does not hold a connection.
+    // The policy check runs first, though: a too-short password must not pay
+    // for a hash it will throw away. The floor comes from the token's own
+    // project via a non-consuming peek, falling back to the global default
+    // when the token is unknown — a short password answers identically
+    // either way, and token validity is only ever probed by someone already
+    // holding the (unguessable) token.
+    const peeked = await peekRecoveryToken(parsed.data.token);
+    const floor = peeked
+      ? await projectPasswordFloor(peeked.project_id)
+      : minPasswordLength(null);
+
+    if (parsed.data.password.length < floor) {
+      return next(appError(400, "Password too short", "password_too_short"));
+    }
+
     const passwordHash = await hashPassword(parsed.data.password);
 
     await prisma.$transaction(async (tx) => {
@@ -217,6 +237,15 @@ export const changePassword: RequestHandler = async (req, res, next) => {
     const projectId = requireProjectId(req);
     const context = requestContext(req);
 
+    // Same per-Project floor as register/reset, resolved from the caller's
+    // own Project.
+    if (
+      parsed.data.newPassword.length <
+      (await projectPasswordFloor(projectId))
+    ) {
+      return next(appError(400, "Password too short", "password_too_short"));
+    }
+
     const account = await prisma.account.findUnique({
       where: {
         user_id_provider_id: {
@@ -236,7 +265,7 @@ export const changePassword: RequestHandler = async (req, res, next) => {
       );
     }
 
-    const currentMatches = await bcrypt.compare(
+    const currentMatches = await verifyPassword(
       parsed.data.currentPassword,
       account.password,
     );

@@ -64,7 +64,7 @@ describe("POST /register", () => {
     const credential = user.accounts[0]!;
     expect(credential.provider_id).toBe("credential");
     expect(credential.password).not.toBe(credentials.password);
-    expect(credential.password?.startsWith("$2")).toBe(true);
+    expect(credential.password?.startsWith("$argon2id$")).toBe(true);
   });
 
   it("starts the account unverified", async () => {

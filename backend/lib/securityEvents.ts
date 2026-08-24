@@ -35,6 +35,7 @@ const SEVERITY: Record<SecurityEventType, SecurityEventSeverity> = {
   SUSPICIOUS_ACTIVITY: SecurityEventSeverity.CRITICAL,
   API_KEY_ISSUED: SecurityEventSeverity.INFO,
   API_KEY_REVOKED: SecurityEventSeverity.WARNING,
+  PROJECT_PASSWORD_POLICY_CHANGED: SecurityEventSeverity.WARNING,
 };
 
 export interface SecurityEventInput {

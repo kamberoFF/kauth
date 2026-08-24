@@ -90,6 +90,13 @@ const schema = z.object({
    * revoked/expired Session survives after nothing still references it.
    */
   AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
+
+  /**
+   * The global default password floor for every Project without its own
+   * override (projects.min_password_length). NIST 800-63B's 15-character
+   * recommendation for single-factor authentication.
+   */
+  PASSWORD_MIN_LENGTH: z.coerce.number().int().min(8).max(128).default(15),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -151,6 +158,7 @@ const config = {
   shutdown_timeout_ms: env.SHUTDOWN_TIMEOUT_MS,
   cleanup_retention_days: env.CLEANUP_RETENTION_DAYS,
   audit_retention_days: env.AUDIT_RETENTION_DAYS,
+  password_min_length: env.PASSWORD_MIN_LENGTH,
   /**
    * ADR 0003: the contract version is kauth's own release version, not a
    * parallel numbering scheme. Read from package.json so a release that

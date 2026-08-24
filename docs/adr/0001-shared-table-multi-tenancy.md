@@ -16,3 +16,13 @@ complexity by tenant count — not worth it before the platform has proven it
 needs that isolation. Revisit if a tenant ever needs guaranteed physical
 data separation (e.g. a compliance requirement), since retrofitting that
 onto a shared-table model is a genuine migration, not a config change.
+
+**Direction note (2026-08-24):** this decision now also carries an expiry
+condition, not just a revisit condition. The long-term plan (see the roadmap)
+is a self-hosted admin dashboard over `backend-sdk`, whose natural end state —
+per-Project schema management through that UI — requires moving to per-Project
+databases and superseding this ADR. That move is deferred until the dashboard
+work starts; which per-Project shape (database-per-tenant vs schema-per-tenant)
+is deliberately undecided until then. Until that point, schema remains owned by
+the server alone: Projects configure behaviour through row-level settings, never
+through DDL.

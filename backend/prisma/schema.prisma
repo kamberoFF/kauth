@@ -20,6 +20,13 @@ model Project {
   trusted_origins String[] @default([])
 
   /**
+   * Per-project minimum password length. Nullable means "use the
+   * deployment-wide PASSWORD_MIN_LENGTH default" (lib/passwords.ts resolves
+   * it); set at creation via POST /projects, changed via PATCH /projects/:id.
+   */
+  min_password_length Int?
+
+  /**
    * Nullable: no owner concept exists until the developer-facing auth
    * bootstrap (ticket 03) creates the reserved platform project and its
    * operator accounts. Projects created directly for test/seed purposes
@@ -441,6 +448,7 @@ enum SecurityEventType {
   SUSPICIOUS_ACTIVITY
   API_KEY_ISSUED
   API_KEY_REVOKED
+  PROJECT_PASSWORD_POLICY_CHANGED
 }
 
 enum SecurityEventSeverity {

@@ -52,6 +52,17 @@ export async function issueRecoveryToken(
 }
 
 /**
+ * Reads a token record without consuming it. Exists so callers that need a
+ * token's context before deciding anything destructive — resetPassword reads
+ * its Project's password policy — can do so without spending single-use-ness.
+ */
+export function peekRecoveryToken(token: string) {
+  return prisma.recoveryToken.findUnique({
+    where: { token_hash: hashToken(token) },
+  });
+}
+
+/**
  * Returns the token record and marks it used, or null when the token is
  * unknown, of the wrong type, already used, or expired. The conditional update
  * is what makes it single-use under concurrent requests.

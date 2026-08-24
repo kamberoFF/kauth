@@ -304,19 +304,40 @@ describe("password change", () => {
     expect(changed!.project_id).toBe(project.id);
   });
 
-  it("rejects a password past the bcrypt input limit", async () => {
+  it("rejects a password past the request-size bound", async () => {
     const registered = await registerUser();
 
     const response = await api("POST", "/change-password", {
       accessToken: registered.body.accessToken,
       body: {
         currentPassword: credentials.password,
-        newPassword: "x".repeat(73),
+        newPassword: "x".repeat(201),
       },
     });
 
     expect(response.status).toBe(400);
     expect(response.body.error.code).toBe("validation");
+  });
+
+  it("accepts a password longer than bcrypt's old 72-byte truncation point", async () => {
+    const registered = await registerUser();
+    const longPassword = "long-but-fine-" + "x".repeat(60);
+
+    const response = await api("POST", "/change-password", {
+      accessToken: registered.body.accessToken,
+      body: {
+        currentPassword: credentials.password,
+        newPassword: longPassword,
+      },
+    });
+
+    expect(response.status).toBe(200);
+
+    const withNew = await api("POST", "/login", {
+      body: { email: credentials.email, password: longPassword },
+      projectId: project.id,
+    });
+    expect(withNew.status).toBe(200);
   });
 });
 

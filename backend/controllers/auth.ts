@@ -26,7 +26,11 @@ import {
   revokeSessions,
   SESSION_TTL_MS,
 } from "../lib/sessions";
-import { hashPassword, verifyPassword } from "../lib/passwords";
+import {
+  hashPassword,
+  projectPasswordFloor,
+  verifyPassword,
+} from "../lib/passwords";
 import {
   recordSecurityEvent,
   tryRecordSecurityEvent,
@@ -47,6 +51,12 @@ export const register: RequestHandler = async (req, res, next) => {
     const { email, username, password, first_name, last_name } = parsed.data;
     const projectId = requireProjectId(req);
     const context = clientContext(req, requireDeviceId(req), projectId);
+
+    // The floor is per-Project policy, resolved here where the Project is
+    // known — the schema only validates shape (see lib/validation.ts).
+    if (password.length < (await projectPasswordFloor(projectId))) {
+      return next(appError(400, "Password too short", "password_too_short"));
+    }
 
     // Both columns are unique per project, so an unchecked username collision
     // would surface as an unhandled P2002 rather than a 409. The error handler
