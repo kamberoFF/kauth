@@ -84,12 +84,14 @@ the coordinated session/audit cleanup job (ADR 0004).
   contract question. The `duplicate_username` 409 is not an oracle: usernames
   are user-chosen public handles. See `.scratch/identity-oracles/`.
 
-### 4. Session policy
+### 4. Session policy — done 2026-08-24
 
-- Make `device_id` server-issued. Today the client supplies it, so it is a risk
-  signal being used as an auth decision.
-- Add sliding expiry and an inactivity timeout. `last_used_at` is written on
-  every refresh and never read for policy.
+Shipped as the `session-policy` tickets: device ids are server-issued
+(HttpOnly `kauth_device` cookie plus `deviceId` in session-creating response
+bodies; `X-Device-Id` survives only as an echo channel), refresh slides
+`expires_at` forward on a rolling 30d window, and an inactivity timeout
+(default 14 days, `SESSION_INACTIVITY_DAYS`) rejects idle sessions at both
+`requireAuth` and refresh.
 
 ### 5. Multi-instance readiness
 
