@@ -206,7 +206,6 @@ model Session {
 
   refreshTokens  RefreshToken[]
   securityEvents SecurityEvent[]
-  csrfTokens     CsrfToken[]
 
   @@index([user_id])
   @@index([user_id, status])
@@ -267,29 +266,6 @@ model RefreshToken {
   @@index([expires_at])
   @@index([project_id])
   @@map("refresh_tokens")
-}
-
-model CsrfToken {
-
-  id String @id @default(uuid()) @db.Uuid
-
-  session    Session @relation(fields: [session_id], references: [id], onDelete: Cascade)
-  session_id String      @db.Uuid
-
-  /**
-   * Hash this too if you want to be extra clean.
-   * For double-submit cookie you may not need DB storage,
-   * but DB-backed CSRF can be useful while learning.
-   */
-  token_hash String @unique
-
-  created_at DateTime  @default(now())
-  expires_at DateTime
-  used_at    DateTime?
-
-  @@index([session_id])
-  @@index([expires_at])
-  @@map("csrf_tokens")
 }
 
 model RecoveryToken {

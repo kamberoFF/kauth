@@ -90,8 +90,6 @@ Check here before "fixing" one of these.
   `X-Device-Id`, and tokens in a URL leak into history and referrers.
 - **OAuth state cookies are `SameSite=Lax`, not `Strict`.** The user returns via
   a top-level cross-site navigation; a strict cookie would not be sent.
-- **`csrf_tokens` is dead schema.** CSRF went stateless. It should be dropped,
-  but has not been touched unilaterally.
 
 ## Writing tests
 

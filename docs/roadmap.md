@@ -139,9 +139,9 @@ sufficient.
 - **Becoming an OIDC provider.** kauth authenticates users for first-party
   apps; it is not an identity provider other applications integrate against.
   This is a product decision, not a backlog item.
-- **A DB-backed CSRF token.** The `csrf_tokens` table is dead schema — the
-  stateless signed approach is no weaker and costs no query. The table should be
-  dropped.
+- **A DB-backed CSRF token.** The stateless signed approach is no weaker and
+  costs no query. The leftover `csrf_tokens` table was dead schema and was
+  dropped 2026-08-24 (tracker-hygiene ticket 01).
 - **Caching the session lookup in `requireAuth`.** A cache reintroduces exactly
   the staleness window that binding tokens to sessions closed. Revisit only if
   profiling shows a real problem.
