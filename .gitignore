@@ -1,0 +1,3 @@
+# Vendored dependencies for installed opencode skills — reproducible from
+# their own package manifests, not source.
+.opencode/node_modules/
