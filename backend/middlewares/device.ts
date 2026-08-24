@@ -55,7 +55,11 @@ export const requireDevice: RequestHandler = (req, _res, next) => {
 
   if (!supplied) {
     return next(
-      appError(400, `Missing required header: ${DEVICE_ID_HEADER}`, "device_id_missing"),
+      appError(
+        400,
+        `Missing device context. Send the ${DEVICE_ID_HEADER} header or the kauth_device cookie`,
+        "device_id_missing",
+      ),
     );
   }
 

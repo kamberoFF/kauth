@@ -7,12 +7,11 @@ import {
   stopTestServer,
 } from "./helpers/api";
 import { prisma } from "../lib/prisma";
+import { UUID_REGEX } from "../constants/regex";
 import { createKauthClient } from "../../packages/client-sdk/src/index";
 import { renderSessionHook } from "../../packages/client-sdk/dev/hookProbe";
 
 const DEVICE_ID = "4f2b3c5d-6e7f-4a90-8b1c-3d4e5f6a7b80";
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const END_USER = {
   email: "enduser@example.com",

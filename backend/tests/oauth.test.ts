@@ -8,6 +8,7 @@ import {
   stopTestServer,
 } from "./helpers/api";
 import { prisma } from "../lib/prisma";
+import { UUID_REGEX } from "../constants/regex";
 import {
   registerOAuthProvider,
   unregisterOAuthProvider,
@@ -432,7 +433,9 @@ describe("code exchange", () => {
     expect(response.body.error.code).toBe("token_invalid");
   });
 
-  it("requires a device id", async () => {
+  it("mints a device id for a first-time browser that can present none", async () => {
+    // The callback redirect cannot carry a device id and a cold browser has
+    // no kauth_device cookie, yet OAuth login must work on the very first try.
     const { code } = await completeFlow();
 
     const response = await api("POST", "/oauth/exchange", {
@@ -440,7 +443,25 @@ describe("code exchange", () => {
       deviceId: null,
     });
 
+    expect(response.status).toBe(200);
+    const minted = response.body.deviceId as string;
+    expect(minted).toMatch(UUID_REGEX);
+
+    const session = await prisma.session.findFirstOrThrow({
+      where: { project_id: project.id },
+    });
+    expect(session.device_id).toBe(minted);
+  });
+
+  it("still rejects a malformed device header on exchange", async () => {
+    const { code } = await completeFlow();
+
+    const response = await api("POST", "/oauth/exchange", {
+      body: { code },
+      deviceId: "not-a-uuid",
+    });
+
     expect(response.status).toBe(400);
-    expect(response.body.error.code).toBe("device_id_missing");
+    expect(response.body.error.code).toBe("device_id_invalid");
   });
 });

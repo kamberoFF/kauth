@@ -362,9 +362,23 @@ export const refresh: RequestHandler = async (req, res, next) => {
       );
     }
 
-    // Unlike requireAuth's read-only idle check, refresh already owns a
-    // transaction, so the idle session is marked EXPIRED here — the client
-    // that finally came back gets a definitive answer, not a limbo.
+    if (session.device_id && session.device_id !== context.deviceId) {
+      return next(
+        appError(
+          401,
+          "Refresh token does not match the current device context",
+          "device_mismatch",
+        ),
+      );
+    }
+
+    // Checked after the device match on purpose: a wrong-device presenter must
+    // get a flat rejection without mutating anything, not be able to expire
+    // someone else's session. Unlike requireAuth's read-only idle check,
+    // refresh already owns a transaction, so the legitimate idle client gets
+    // its session marked EXPIRED here rather than left in limbo. No
+    // SecurityEvent, matching the expired-by-clock branch above — expiry is a
+    // retention transition, not a security one.
     if (isInactive(session, now)) {
       await prisma.$transaction([
         prisma.refreshToken.update({
@@ -378,16 +392,6 @@ export const refresh: RequestHandler = async (req, res, next) => {
       ]);
 
       return next(appError(401, "Session has expired", "session_expired"));
-    }
-
-    if (session.device_id && session.device_id !== context.deviceId) {
-      return next(
-        appError(
-          401,
-          "Refresh token does not match the current device context",
-          "device_mismatch",
-        ),
-      );
     }
 
     const nextRefreshTokenId = crypto.randomUUID();

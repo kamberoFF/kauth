@@ -441,6 +441,30 @@ describe("POST /refresh", () => {
     expect(response.body.error.code).toBe("device_mismatch");
   });
 
+  it("does not let a wrong-device presenter expire an idle session", async () => {
+    const first = await newSession();
+    const session = await prisma.session.findFirstOrThrow({});
+
+    await prisma.session.update({
+      where: { id: session.id },
+      data: { last_used_at: new Date(Date.now() - INACTIVITY_WINDOW_MS - 1) },
+    });
+
+    const response = await api("POST", "/refresh", {
+      body: { refreshToken: first },
+      deviceId: OTHER_DEVICE_ID,
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("device_mismatch");
+
+    // The idle session is left untouched for its rightful device.
+    const row = await prisma.session.findUniqueOrThrow({
+      where: { id: session.id },
+    });
+    expect(row.status).toBe("ACTIVE");
+  });
+
   it("still demands a device context when the client can present neither cookie nor header", async () => {
     const first = await newSession();
 
