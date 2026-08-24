@@ -19,6 +19,7 @@ import { prisma } from "./lib/prisma";
 import { AppError } from "./types/errors";
 import {
   API_KEY_HEADER,
+  CONTRACT_VERSION_HEADER,
   CSRF_TOKEN_HEADER,
   DEVICE_ID_HEADER,
   PROJECT_ID_HEADER,
@@ -29,6 +30,13 @@ const app = express();
 
 app.set("trust proxy", config.trust_proxy);
 app.disable("x-powered-by");
+
+// First, so even error-handler and 404 responses advertise it — the SDKs
+// exact-match this on every request (ADR 0003).
+app.use((_req, res, next) => {
+  res.setHeader(CONTRACT_VERSION_HEADER, config.contract_version);
+  next();
+});
 
 app.use(requestLog);
 

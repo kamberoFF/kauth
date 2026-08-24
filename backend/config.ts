@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { z } from "zod";
+import { version as packageVersion } from "./package.json";
 
 dotenv.config();
 
@@ -141,6 +142,12 @@ const config = {
   shutdown_timeout_ms: env.SHUTDOWN_TIMEOUT_MS,
   cleanup_retention_days: env.CLEANUP_RETENTION_DAYS,
   audit_retention_days: env.AUDIT_RETENTION_DAYS,
+  /**
+   * ADR 0003: the contract version is kauth's own release version, not a
+   * parallel numbering scheme. Read from package.json so a release that
+   * forgets to reason about shapes still changes what SDKs see.
+   */
+  contract_version: packageVersion,
 } as const;
 
 export default config;

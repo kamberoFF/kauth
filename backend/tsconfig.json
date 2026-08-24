@@ -16,6 +16,7 @@
     // Type resolution
     "types": ["node", "bun"],
     "typeRoots": ["./node_modules/@types", "./types"],
+    "resolveJsonModule": true,
 
     // Best practices
     "strict": true,
