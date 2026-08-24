@@ -12,6 +12,9 @@ const TTL_MS: Record<TokenType, number> = {
   PASSWORD_RESET: 60 * 60 * 1000,
   // Only has to survive one redirect back to the frontend.
   OAUTH_EXCHANGE: 2 * 60 * 1000,
+  // Bridges the two phases of an enrolled user's sign-in; issuance and
+  // verification land in a later ticket.
+  MFA_CHALLENGE: 5 * 60 * 1000,
 };
 
 /**

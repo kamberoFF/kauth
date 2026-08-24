@@ -38,6 +38,8 @@
     "typescript-eslint": "^8.57.2"
   },
   "dependencies": {
+    "@oslojs/encoding": "^1.1.0",
+    "@oslojs/otp": "^1.1.0",
     "@prisma/adapter-pg": "^7.5.0",
     "@prisma/client": "^7.5.0",
     "@types/cors": "^2.8.19",

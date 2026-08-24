@@ -36,6 +36,15 @@ const SEVERITY: Record<SecurityEventType, SecurityEventSeverity> = {
   API_KEY_ISSUED: SecurityEventSeverity.INFO,
   API_KEY_REVOKED: SecurityEventSeverity.WARNING,
   PROJECT_PASSWORD_POLICY_CHANGED: SecurityEventSeverity.WARNING,
+
+  // Second-factor lifecycle. Enrollment is split so a generated-but-
+  // unconfirmed secret still leaves a trace; a used backup code means the
+  // authenticator itself was not part of the sign-in.
+  MFA_ENROLLMENT_STARTED: SecurityEventSeverity.INFO,
+  MFA_ENROLLED: SecurityEventSeverity.WARNING,
+  MFA_DISABLED: SecurityEventSeverity.WARNING,
+  BACKUP_CODE_USED: SecurityEventSeverity.WARNING,
+  PROJECT_MFA_POLICY_CHANGED: SecurityEventSeverity.WARNING,
 };
 
 export interface SecurityEventInput {

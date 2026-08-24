@@ -13,6 +13,8 @@ process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = TEST_DATABASE_URL;
 process.env.JWT_SECRET ??= "test-jwt-secret-not-used-outside-of-tests";
 process.env.COOKIE_SECRET ??= "test-cookie-secret-not-used-outside-of-tests";
+// 32 bytes of hex; throwaway, like every other secret in this file.
+process.env.ENCRYPTION_KEY ??= "aa".repeat(32);
 
 function adminUrl(databaseUrl: string) {
   const url = new URL(databaseUrl);

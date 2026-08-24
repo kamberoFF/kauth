@@ -8,7 +8,6 @@ datasource db {
 }
 
 model Project {
-
   id   String @id @default(uuid()) @db.Uuid
   name String
 
@@ -25,6 +24,14 @@ model Project {
    * it); set at creation via POST /projects, changed via PATCH /projects/:id.
    */
   min_password_length Int?
+
+  /**
+   * Per-project MFA mandate. Enforcement (grace stamping and the requireAuth
+   * wall) lands in a later ticket; the columns exist so the mandate's data
+   * model is in place from the start.
+   */
+  enforce_mfa    Boolean @default(false)
+  mfa_grace_days Int?
 
   /**
    * Nullable: no owner concept exists until the developer-facing auth
@@ -51,7 +58,6 @@ model Project {
 }
 
 model User {
-
   id String @id @default(uuid()) @db.Uuid
 
   project    Project @relation(fields: [project_id], references: [id], onDelete: Restrict)
@@ -72,6 +78,28 @@ model User {
   last_name  String?
   image      String?
   role       Role    @default(USER)
+
+  /**
+   * TOTP second factor (ADR 0006). totp_secret holds AES-256-GCM ciphertext
+   * from lib/cryptoBox.ts, never the raw base32 secret. mfa_enrolled_at null
+   * with a non-null secret means enrollment is pending confirmation; a
+   * pending enrollment challenges nothing at sign-in.
+   *
+   * Deliberately TIMESTAMP(3), not TIMESTAMPTZ as the MFA spec's DDL sketch
+   * wrote: every DateTime in this schema maps that way, and mixing time
+   * regimes across columns costs more than the annotation would buy.
+   */
+  totp_secret      String?
+  mfa_enrolled_at  DateTime?
+  mfa_grace_ends_at DateTime?
+
+  /**
+   * Last successfully matched TOTP time step. Any later code at or below it
+   * is a replay and must be rejected.
+   */
+  last_totp_step Int?
+
+  backupCodes MfaBackupCode[]
 
   accounts       Account[]
   sessions       Session[]
@@ -108,7 +136,6 @@ model User {
  * originally created with a password.
  */
 model Account {
-
   id String @id @default(uuid()) @db.Uuid
 
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
@@ -150,7 +177,6 @@ model Account {
 }
 
 model Session {
-
   id      String @id @default(uuid()) @db.Uuid
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   user_id String @db.Uuid
@@ -223,12 +249,11 @@ model Session {
 }
 
 model RefreshToken {
-
-  id String @id @default(uuid()) @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
   selector String @unique
 
   session    Session @relation(fields: [session_id], references: [id], onDelete: Cascade)
-  session_id String      @db.Uuid
+  session_id String  @db.Uuid
 
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   user_id String @db.Uuid
@@ -276,7 +301,6 @@ model RefreshToken {
 }
 
 model RecoveryToken {
-
   id String @id @default(uuid()) @db.Uuid
 
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
@@ -293,6 +317,12 @@ model RecoveryToken {
 
   token_type TokenType
 
+  /**
+   * MFA_CHALLENGE only: the resolved device id of phase one. Phase two must
+   * arrive from the same device, or the challenge is invalid.
+   */
+  device_id String? @db.Uuid
+
   created_at  DateTime  @default(now())
   expires_at  DateTime
   consumed_at DateTime?
@@ -305,8 +335,27 @@ model RecoveryToken {
   @@map("recovery_tokens")
 }
 
-model ApiKey {
+/**
+ * Single-use offline stand-ins for a TOTP code, shown exactly once at
+ * enrollment confirmation. Stored as SHA-256 hashes for the same reason as
+ * recovery tokens: a database leak must not yield working codes.
+ */
+model MfaBackupCode {
+  id String @id @default(uuid()) @db.Uuid
 
+  user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user_id String @db.Uuid
+
+  code_hash String @unique
+
+  used_at    DateTime?
+  created_at DateTime  @default(now())
+
+  @@index([user_id])
+  @@map("mfa_backup_codes")
+}
+
+model ApiKey {
   id String @id @default(uuid()) @db.Uuid
 
   project    Project @relation(fields: [project_id], references: [id], onDelete: Restrict)
@@ -353,14 +402,13 @@ model ApiKey {
 }
 
 model SecurityEvent {
-
   id String @id @default(uuid()) @db.Uuid
 
   user    User?   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   user_id String? @db.Uuid
 
   session    Session? @relation(fields: [session_id], references: [id], onDelete: SetNull)
-  session_id String?      @db.Uuid
+  session_id String?  @db.Uuid
 
   project    Project? @relation(fields: [project_id], references: [id], onDelete: SetNull)
   project_id String?  @db.Uuid
@@ -398,6 +446,13 @@ enum TokenType {
    * back to the frontend without putting session tokens in a URL.
    */
   OAUTH_EXCHANGE
+
+  /**
+   * Bridges phase one (credentials verified) and phase two (code verified)
+   * of an enrolled user's sign-in. Single-use, ~5-minute TTL, bound to the
+   * device id that started login.
+   */
+  MFA_CHALLENGE
 }
 
 enum SessionStatus {
@@ -449,6 +504,17 @@ enum SecurityEventType {
   API_KEY_ISSUED
   API_KEY_REVOKED
   PROJECT_PASSWORD_POLICY_CHANGED
+
+  /**
+   * Second-factor lifecycle. Enrollment is split so a generated-but-unconfirmed
+   * secret still leaves a trace; BACKUP_CODE_USED flags that an offline code,
+   * not the authenticator, completed the sign-in.
+   */
+  MFA_ENROLLMENT_STARTED
+  MFA_ENROLLED
+  MFA_DISABLED
+  BACKUP_CODE_USED
+  PROJECT_MFA_POLICY_CHANGED
 }
 
 enum SecurityEventSeverity {

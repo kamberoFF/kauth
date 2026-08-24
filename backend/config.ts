@@ -17,6 +17,55 @@ function secret(name: string) {
   return z.string().min(1, `${name} is required`);
 }
 
+const HEX_KEY_PATTERN = /^(?:[0-9a-f]{2})+$/i;
+const BASE64_KEY_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+
+const MIN_ENCRYPTION_KEY_BYTES = 32;
+
+/**
+ * Byte length of a base64/hex-encoded key, or null when the value is neither
+ * encoding. Hex is recognised first so a hex string can never be silently
+ * re-read as base64; Buffer.from's base64 mode ignores invalid characters,
+ * so shape checks must come before any length claim.
+ */
+function encodedKeyByteLength(value: string) {
+  if (HEX_KEY_PATTERN.test(value)) {
+    return value.length / 2;
+  }
+
+  // Base64url normalizes to plain base64; the shape check below covers both.
+  const normalizedBase64 = value.replace(/-/g, "+").replace(/_/g, "/");
+
+  if (!BASE64_KEY_PATTERN.test(normalizedBase64)) {
+    return null;
+  }
+
+  return Buffer.from(normalizedBase64, "base64").length;
+}
+
+/**
+ * The MFA secret-encryption key (ADR 0006). Unlike the string-length secrets
+ * above, this one carries real entropy requirements: it must decode to at
+ * least 32 bytes (AES-256), in either hex or base64, wherever configured.
+ * Whitespace is normalized here, once, so validation and the stored value
+ * can never diverge.
+ */
+function encryptionKey(name: string) {
+  return z
+    .string()
+    .transform((value) => value.trim())
+    .pipe(
+      z
+        .string()
+        .min(1, `${name} is required`)
+        .refine(
+          (value) =>
+            (encodedKeyByteLength(value) ?? 0) >= MIN_ENCRYPTION_KEY_BYTES,
+          `${name} must be base64 or hex encoding at least ${MIN_ENCRYPTION_KEY_BYTES} bytes of entropy`,
+        ),
+    );
+}
+
 const schema = z.object({
   PORT: z.coerce.number().int().positive().default(6767),
   NODE_ENV: z
@@ -25,6 +74,7 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   JWT_SECRET: secret("JWT_SECRET"),
   COOKIE_SECRET: secret("COOKIE_SECRET"),
+  ENCRYPTION_KEY: encryptionKey("ENCRYPTION_KEY"),
   FRONTEND_URL: z.url().default("http://localhost:5173"),
   APP_URL: z.url().default("http://localhost:6767"),
   /**
@@ -152,6 +202,8 @@ const config = {
   database_url: env.DATABASE_URL,
   jwt_secret: env.JWT_SECRET,
   cookie_secret: env.COOKIE_SECRET,
+  // Already trimmed by the schema's normalization.
+  encryption_key: env.ENCRYPTION_KEY,
   frontend_url: env.FRONTEND_URL,
   app_url: env.APP_URL,
   trust_proxy: env.TRUST_PROXY === "false" ? false : env.TRUST_PROXY,
