@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import config from "./config";
 import authRoutes from "./routes/auth";
 import accountRoutes from "./routes/account";
+import mfaRoutes from "./routes/mfa";
 import oauthRoutes from "./routes/oauth";
 import sessionsRoutes from "./routes/sessions";
 import projectsRoutes from "./routes/projects";
@@ -104,6 +105,7 @@ app.get("/csrf-token", (_req, res) => {
 
 app.use(authRoutes);
 app.use(accountRoutes);
+app.use(mfaRoutes);
 app.use(oauthRoutes);
 app.use(sessionsRoutes);
 app.use(projectsRoutes);

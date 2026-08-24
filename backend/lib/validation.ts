@@ -65,3 +65,12 @@ export const updateProjectSchema = z.object({
 export const issueApiKeySchema = z.object({
   type: z.enum(["PUBLISHABLE", "SECRET"]),
 });
+
+/**
+ * Shape only: a TOTP code that fails the regex check inside matchTotpStep is
+ * a *wrong* code (401), not a validation failure — the boundary between the
+ * two is what keeps malformed input and bad credentials distinguishable.
+ */
+export const mfaCodeSchema = z.object({
+  code: z.string().min(1).max(20),
+});
