@@ -3,7 +3,7 @@
 **Living document.** Unlike the dated audit and remediation logs, this file is
 kept current — if it disagrees with the code, the file is wrong.
 
-Last reviewed: 2026-08-23.
+Last reviewed: 2026-08-24.
 
 **Multi-tenancy pivot in progress.** As of 2026-08-22 kauth is being extended
 into a self-hosted, multi-tenant auth platform — see
@@ -15,8 +15,10 @@ project scoping and OAuth validation hygiene; the item below still applies
 to everything built *before* this pivot started, and multi-tenancy itself is
 no longer "deliberately last" — see the map's reconciliation note for why
 schema work went ahead of the rest of this backlog. Tickets 05/06 (the SDK
-packages) are next in the tracker's dependency graph, but see "Before
-starting the SDK" below — that gate is still active and unmet.
+packages) are next in the tracker's dependency graph; the "Before starting
+the SDK" gate below was satisfied on 2026-08-24 by the ops-hardening tickets
+(structured logging, migrate-on-startup/graceful shutdown, liveness-readiness
+split, non-root container, cleanup job).
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
 That plan was written in June 2026, before any of it was built; the parts that
@@ -53,23 +55,12 @@ Enough context to read the rest of this file.
 
 Ordered by what unblocks or protects the most.
 
-### 1. Operations
+### 1. Operations — done 2026-08-24
 
-The only area with nothing done in it, and none of it touches the auth contract.
-
-- Run the container as non-root, on a minimal production image, with no dev bind
-  mounts. `oven/bun` already ships a `bun` user.
-- Apply `prisma migrate deploy` at startup rather than only `generate` at build.
-- Graceful shutdown: stop accepting work on `SIGTERM`, close the server, then
-  disconnect Prisma. `tests/helpers/api.ts` already does this correctly and is a
-  usable model.
-- Structured logging with correlation fields — request id, user id, session id,
-  route, outcome code. Application logs and audit events stay separate concerns:
-  the audit log already exists and should not be diluted into log text.
-- Split `/health` into liveness and readiness, with readiness reflecting
-  database connectivity, so deployment automation can act on it.
-- A cleanup job for revoked sessions and consumed refresh tokens, which
-  currently accumulate by design.
+Shipped as the `ops-hardening` tickets: non-root container with a liveness
+healthcheck, migrate-on-startup with bounded graceful shutdown, structured
+logging with request/user/session correlation, liveness/readiness split, and
+the coordinated session/audit cleanup job (ADR 0004).
 
 ### 2. Password hashing
 
@@ -116,27 +107,22 @@ today's mistakes into permanent ones. Start it when all of these hold:
 
 - Session rotation and revocation rules are stable. **Done.**
 - Token transport is final for the supported client types. **Done.**
-- Core auth events are observable. Partly — the audit log exists, structured
-  logging does not.
+- Core auth events are observable. **Done** — structured request logging with
+  request/user/session correlation landed 2026-08-24 alongside the existing
+  audit log.
 - Integration tests protect the main flows. **Done.**
-- The response and error contract is versioned and consistent. **Done**
-  2026-08-23 — see ADR 0003: an `X-Kauth-Contract-Version` header, exact-match
-  SDK enforcement, no multi-version hosting (kauth is self-hosted
-  per-operator, never one instance serving many independently-upgrading
-  callers). Not yet implemented in code — the decision is recorded, the
-  header/check itself still needs building (part of tickets 05/06, since
-  it's the SDKs that enforce it).
+- The response and error contract is versioned and consistent. Decision done
+  2026-08-23 (ADR 0003: `X-Kauth-Contract-Version`, exact-match SDK
+  enforcement, no multi-version hosting). The header itself and the SDK-side
+  check are built with tickets 05/06, since the SDKs are what enforce it.
 
-So: after the operations work. (The versioning decision itself is done; see
-above — what's left of this gate is the operations backlog.)
+So: the gate is met as of the ops-hardening work (2026-08-24). Tickets 05/06
+are unblocked.
 
-**Confirmed via `/domain-modeling` 2026-08-23.** Tickets 05/06 (backend and
-client SDK packages) show as `ready-for-agent` in
-`.scratch/clerk-clone-foundation/issues/` — their only *ticket-tracker*
-blocker (04, API key issuance) is done — but that graph doesn't encode this
-gate. Operations hardening (section "1. Operations" above) still hasn't
-happened, so it remains a real, deliberate blocker on 05 and 06 beyond what
-the ticket tracker shows, not a stale leftover from before the pivot.
+~~Operations hardening (section "1. Operations" above) still hasn't happened,
+so it remains a real, deliberate blocker on 05 and 06 beyond what the ticket
+tracker shows, not a stale leftover from before the pivot.~~ Resolved
+2026-08-24 — see section "1. Operations".
 Revisit only by explicitly re-deciding this, not by treating "04 is done" as
 sufficient.
 

@@ -8,14 +8,11 @@ functions and a reactive session hook for the first supported framework —
 proving a developer can wire kauth into their own UI without touching raw
 HTTP or cookie handling directly.
 
-**Blocked by:** 04 (done), and `docs/roadmap.md`'s "Before starting the SDK"
-gate's remaining item — operations hardening (section "1. Operations")
-still hasn't happened. The gate's other item, an API-versioning decision,
-was resolved 2026-08-23 via `/domain-modeling` — see ADR 0003 and the new
-acceptance criterion below. Do not treat this ticket as unblocked until
-operations hardening is actually done.
+**Blocked by:** 04 (done). The roadmap "Before starting the SDK" gate's last
+open item — operations hardening — was satisfied 2026-08-24 by the
+`ops-hardening` tickets; see `docs/roadmap.md`.
 
-**Status:** ready-for-agent (do not pick up — see "Blocked by")
+**Status:** ready-for-agent
 
 - [ ] The package is importable independently of the backend package
       (ticket 05) — never bundled with anything secret-key-scoped

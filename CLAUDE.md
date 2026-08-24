@@ -40,6 +40,9 @@ backend/
   prisma/            schema + migrations
   tests/             integration suites; helpers/api.ts has the request helpers
 frontend/            Vite + React scaffold, no auth client yet
+packages/            SDK packages, one distribution artifact each
+  backend-sdk/       server-only, secret-key-scoped; enforces the contract
+                     version header (ADR 0003)
 docs/                roadmap (living) + audit and remediation logs (historical)
 ```
 
@@ -56,7 +59,10 @@ docs/                roadmap (living) + audit and remediation logs (historical)
   `recordSecurityEvent` (joins your transaction) or `tryRecordSecurityEvent`
   (swallows failures). Severity is derived from the event type — do not pass it
   per call site. Never put tokens, hashes, or credentials in `metadata`.
-- **Sessions are revoked, never deleted.** The audit log references those rows.
+- **Sessions are revoked, never deleted** — with one deliberate exception:
+  the cleanup job (`scripts/cleanup.ts`, ADR 0004) deletes long-past-retention
+  sessions only after no audit event still references them. The audit log
+  references those rows.
 - **Express 4, not 5.** A rejected promise from a middleware is *not* forwarded
   to the error handler — async middleware needs `try/catch` with `next(error)`.
 - **`res.clearCookie` needs the same `path` and no `maxAge`.** Express turns
