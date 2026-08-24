@@ -6,6 +6,7 @@ import {
   resetDatabase,
   startTestServer,
   stopTestServer,
+  TEST_DEVICE_ID,
 } from "./helpers/api";
 
 const credentials = {
@@ -111,7 +112,15 @@ describe("cookie transport", () => {
     const registered = await registerUser();
     const client = cookieClient();
     const csrfToken = await client.primeCsrf();
-    await login(client, csrfToken);
+
+    // Explicit echo of the registration device: the re-login then revokes
+    // exactly the session the bearer token below belongs to.
+    await client.request("POST", "/login", {
+      csrfToken,
+      body: { email: credentials.email, password: credentials.password },
+      projectId: project.id,
+      deviceId: TEST_DEVICE_ID,
+    });
 
     // The header token belongs to the session the re-login just revoked, so if
     // it is honoured the request fails — which is exactly what proves precedence.

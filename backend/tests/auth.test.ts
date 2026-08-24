@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import {
   api,
+  cookieClient,
   createTestProject,
   resetDatabase,
   startTestServer,
@@ -10,6 +11,7 @@ import {
 } from "./helpers/api";
 import { prisma } from "../lib/prisma";
 import { generateTokens } from "../lib/jwt";
+import { UUID_REGEX } from "../constants/regex";
 
 const OTHER_DEVICE_ID = "9f8e7d6c-5b4a-4392-8172-6f5e4d3c2b1a";
 
@@ -96,15 +98,37 @@ describe("POST /register", () => {
     });
   });
 
-  it("requires a well-formed device header", async () => {
-    const absent = await api("POST", "/register", {
+  it("mints a device id when the client supplies none", async () => {
+    const response = await api("POST", "/register", {
       body: credentials,
       projectId: project.id,
       deviceId: null,
     });
-    expect(absent.status).toBe(400);
-    expect(absent.body.error.code).toBe("device_id_missing");
 
+    expect(response.status).toBe(201);
+    const minted = response.body.deviceId as string;
+    expect(minted).toMatch(UUID_REGEX);
+
+    const session = await prisma.session.findFirstOrThrow({
+      where: { user_id: response.body.user.id },
+    });
+    expect(session.device_id).toBe(minted);
+  });
+
+  it("hands the device id to cookie clients via kauth_device", async () => {
+    const client = cookieClient();
+
+    const response = await client.request("POST", "/register", {
+      body: credentials,
+      projectId: project.id,
+      deviceId: null,
+    });
+
+    expect(response.status).toBe(201);
+    expect(client.get("kauth_device")).toBe(response.body.deviceId);
+  });
+
+  it("still rejects a malformed device header on register", async () => {
     const malformed = await api("POST", "/register", {
       body: credentials,
       projectId: project.id,
@@ -144,11 +168,36 @@ describe("POST /login", () => {
     const response = await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },
       projectId: project.id,
+      deviceId: null,
     });
 
     expect(response.status).toBe(200);
     expect(response.body.accessToken).toBeString();
     expect(response.body.refreshToken).toBeString();
+    expect(response.body.deviceId).toMatch(UUID_REGEX);
+  });
+
+  it("mints a fresh device id for a client that lost its old one, leaving other devices' sessions alone", async () => {
+    // beforeEach already registered the user on TEST_DEVICE_ID.
+    const response = await api("POST", "/login", {
+      body: { email: credentials.email, password: credentials.password },
+      projectId: project.id,
+      deviceId: null,
+    });
+
+    expect(response.status).toBe(200);
+    const minted = response.body.deviceId as string;
+    expect(minted).toMatch(UUID_REGEX);
+    expect(minted).not.toBe(TEST_DEVICE_ID);
+    // The minted device matches no prior session, so nothing is replaced —
+    // the new login coexists with the registration session instead of
+    // silently killing an unrelated browser's session.
+    const sessions = await prisma.session.findMany({
+      where: { project_id: project.id },
+    });
+    const byDevice = new Map(sessions.map((s) => [s.device_id, s.status]));
+    expect(byDevice.get(TEST_DEVICE_ID)).toBe("ACTIVE");
+    expect(byDevice.get(minted)).toBe("ACTIVE");
   });
 
   it("rejects a wrong password", async () => {
@@ -343,6 +392,50 @@ describe("POST /refresh", () => {
 
     expect(response.status).toBe(401);
     expect(response.body.error.code).toBe("device_mismatch");
+  });
+
+  it("still demands a device context when the client can present neither cookie nor header", async () => {
+    const first = await newSession();
+
+    const response = await api("POST", "/refresh", {
+      body: { refreshToken: first },
+      deviceId: null,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("device_id_missing");
+  });
+});
+
+describe("cookie transport without an explicit device header", () => {
+  it("lets a browser-style client register, refresh, and log out on the minted device id alone", async () => {
+    const client = cookieClient();
+    const csrf = await client.primeCsrf();
+
+    const registered = await client.request("POST", "/register", {
+      body: credentials,
+      projectId: project.id,
+      deviceId: null,
+      csrfToken: csrf,
+    });
+    expect(registered.status).toBe(201);
+
+    // No x-device-id is ever sent; the jar carries kauth_device alongside
+    // the auth cookies. A cookie client receives no body tokens — the rotated
+    // refresh token arrives as a replacement cookie.
+    const refreshBefore = client.get("kauth_refresh");
+    const refreshed = await client.request("POST", "/refresh", {
+      csrfToken: csrf,
+    });
+    expect(refreshed.status).toBe(200);
+    expect(client.get("kauth_refresh")).toBeDefined();
+    expect(client.get("kauth_refresh")).not.toBe(refreshBefore);
+
+    const loggedOut = await client.request("POST", "/logout", {
+      csrfToken: csrf,
+    });
+    expect(loggedOut.status).toBe(200);
+    expect(client.get("kauth_device")).toBeUndefined();
   });
 });
 

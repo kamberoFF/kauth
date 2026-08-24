@@ -393,6 +393,8 @@ export const exchangeOAuthCode: RequestHandler = async (req, res, next) => {
         refreshToken: result.refreshToken.token,
       },
       {},
+      200,
+      context.deviceId,
     );
   } catch (error) {
     next(error);

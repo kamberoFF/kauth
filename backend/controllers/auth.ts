@@ -134,6 +134,7 @@ export const register: RequestHandler = async (req, res, next) => {
         },
       },
       201,
+      context.deviceId,
     );
   } catch (error) {
     next(error);
@@ -233,6 +234,8 @@ export const login: RequestHandler = async (req, res, next) => {
         refreshToken: result.refreshToken.token,
       },
       {},
+      200,
+      context.deviceId,
     );
   } catch (error) {
     next(error);

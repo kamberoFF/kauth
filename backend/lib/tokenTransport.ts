@@ -1,10 +1,15 @@
 import type { Request, Response } from "express";
 import {
+  DEVICE_COOKIE,
   REFRESH_COOKIE,
   SESSION_COOKIE,
   TOKEN_RESPONSE_HEADER,
 } from "../constants/headers";
-import { accessCookieOptions, refreshCookieOptions } from "../config/cookies";
+import {
+  accessCookieOptions,
+  deviceCookieOptions,
+  refreshCookieOptions,
+} from "../config/cookies";
 
 export interface IssuedTokens {
   accessToken: string;
@@ -36,9 +41,11 @@ export function clearAuthCookies(res: Response) {
   const { maxAge: _accessMaxAge, ...accessClearOptions } = accessCookieOptions;
   const { maxAge: _refreshMaxAge, ...refreshClearOptions } =
     refreshCookieOptions;
+  const { maxAge: _deviceMaxAge, ...deviceClearOptions } = deviceCookieOptions;
 
   res.clearCookie(SESSION_COOKIE, accessClearOptions);
   res.clearCookie(REFRESH_COOKIE, refreshClearOptions);
+  res.clearCookie(DEVICE_COOKIE, deviceClearOptions);
 }
 
 export function readSessionCookie(req: Request) {
@@ -53,6 +60,11 @@ export function readRefreshCookie(req: Request) {
  * Sets the cookies and returns `body`, extended with the raw tokens only when
  * the caller opted in. Every endpoint that issues a session goes through here so
  * the decision is made once.
+ *
+ * `deviceId` is the server-issued device identity for the session being
+ * created: it always rides the cookie jar for browsers and is also included in
+ * the JSON body unconditionally, because non-cookie clients need it to echo on
+ * later requests but may not have opted into body tokens.
  */
 export function sendAuthResponse(
   req: Request,
@@ -60,8 +72,13 @@ export function sendAuthResponse(
   tokens: IssuedTokens,
   body: Record<string, unknown>,
   status = 200,
+  deviceId?: string,
 ) {
   setAuthCookies(res, tokens);
+
+  if (deviceId !== undefined) {
+    res.cookie(DEVICE_COOKIE, deviceId, deviceCookieOptions);
+  }
 
   const payload = wantsBodyTokens(req)
     ? {
@@ -70,6 +87,10 @@ export function sendAuthResponse(
         refreshToken: tokens.refreshToken,
       }
     : body;
+
+  if (deviceId !== undefined) {
+    payload.deviceId = deviceId;
+  }
 
   res.status(status).json(payload);
 }

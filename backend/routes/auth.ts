@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { register, login, refresh, logout } from "../controllers/auth";
 import { requireAuth } from "../middlewares/auth";
-import { requireDevice } from "../middlewares/device";
+import { requireDevice, resolveDevice } from "../middlewares/device";
 import { resolveProjectFromKeyOrHeader } from "../middlewares/apiKey";
 import {
   loginAccountLimiter,
@@ -16,7 +16,7 @@ router.post(
   "/register",
   resolveProjectFromKeyOrHeader,
   registerLimiter,
-  requireDevice,
+  resolveDevice,
   register,
 );
 router.post(
@@ -24,7 +24,7 @@ router.post(
   resolveProjectFromKeyOrHeader,
   loginIpLimiter,
   loginAccountLimiter,
-  requireDevice,
+  resolveDevice,
   login,
 );
 router.post("/refresh", refreshLimiter, requireDevice, refresh);

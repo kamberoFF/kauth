@@ -1,7 +1,1 @@
-/**
- * The contract version this SDK was built against. ADR 0003: it must be bumped
- * in the same release as any kauth change to a response or error shape,
- * including purely additive ones — the SDK hard-fails against a server
- * advertising anything else.
- */
-export const CONTRACT_VERSION = "0.1.0";
+/** * The contract version this SDK was built against. ADR 0003: it must be bumped * in the same release as any kauth change to a response or error shape, * including purely additive ones — the SDK hard-fails against a server * advertising anything else. */export const CONTRACT_VERSION = "0.2.0";

@@ -15,9 +15,12 @@ export interface KauthClientOptions {
    */
   contractVersion?: string;
   /**
-   * Identifies this installation across sign-in/sign-out/refresh. Defaults to
-   * a fresh UUID per client instance; pass a persisted value so a returning
-   * user's new session replaces their old one on the same device.
+   * The server issues and owns device identity: it mints one at session
+   * creation, returns it as `deviceId` in the response body (and an
+   * HttpOnly cookie for browser clients), and this SDK echoes the captured
+   * value on later requests. Pass a persisted value from a previous run so
+   * a returning user's new session replaces their old one on the same
+   * device; otherwise the first sign-up/sign-in simply mints a fresh one.
    */
   deviceId?: string;
 }
@@ -101,11 +104,12 @@ export function createKauthClient({
   baseUrl,
   publishableKey,
   contractVersion = CONTRACT_VERSION,
-  deviceId = crypto.randomUUID(),
+  deviceId: initialDeviceId,
 }: KauthClientOptions): KauthClient {
   const root = baseUrl.replace(/\/+$/, "");
 
   let state: SessionState = { status: "signedOut" };
+  let deviceId = initialDeviceId;
   const listeners = new Set<() => void>();
 
   function setState(next: SessionState) {
@@ -130,7 +134,9 @@ export function createKauthClient({
       headers: {
         "content-type": "application/json",
         "x-api-key": publishableKey,
-        "x-device-id": deviceId,
+        // Omitted until the server has issued a device id for this client;
+        // the platform mints one when the header is absent.
+        ...(deviceId !== undefined ? { "x-device-id": deviceId } : {}),
         // Native-style transport: tokens come back in the body because this
         // client must work identically in browsers and native apps. The
         // platform still sets its cookies either way.
@@ -152,10 +158,18 @@ export function createKauthClient({
     return json as Record<string, unknown>;
   }
 
+  /** Captures the server-issued device id from a session-creating response. */
+  function captureDeviceId(body: Record<string, unknown>) {
+    if (typeof body.deviceId === "string" && body.deviceId.length > 0) {
+      deviceId = body.deviceId;
+    }
+  }
+
   return {
     async signUp(input) {
       const body = await request("POST", "/register", input);
       const result = body as unknown as SignUpResult;
+      captureDeviceId(body);
 
       setState({
         status: "signedIn",
@@ -169,6 +183,7 @@ export function createKauthClient({
 
     async signIn(input) {
       const body = await request("POST", "/login", input);
+      captureDeviceId(body);
       const { accessToken, refreshToken } = body as {
         accessToken: string;
         refreshToken: string;
@@ -194,7 +209,7 @@ export function createKauthClient({
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "x-device-id": deviceId,
+            ...(deviceId !== undefined ? { "x-device-id": deviceId } : {}),
             "x-token-response": "body",
             authorization: `Bearer ${accessToken}`,
           },

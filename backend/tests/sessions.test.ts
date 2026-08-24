@@ -189,9 +189,15 @@ describe("DELETE /sessions/:sessionId", () => {
   });
 
   it("clears the caller's cookies when revoking their own current session", async () => {
-    await registerUser();
     const client = cookieClient();
     const csrfToken = await client.primeCsrf();
+    // Registration through the jar so the login echoes the same kauth_device
+    // cookie and replaces — rather than sits beside — the registration session.
+    await client.request("POST", "/register", {
+      csrfToken,
+      body: credentials,
+      projectId: project.id,
+    });
     await client.request("POST", "/login", {
       csrfToken,
       body: { email: credentials.email, password: credentials.password },

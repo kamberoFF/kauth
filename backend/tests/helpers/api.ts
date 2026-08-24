@@ -177,6 +177,10 @@ export function cookieClient() {
 
       const response = await api<T>(method, path, {
         ...options,
+        // A browser stand-in never injects the device header on its own; the
+        // jar's kauth_device cookie is the device context. An explicit
+        // options.deviceId (header-echo tests) still wins via the spread.
+        deviceId: options.deviceId ?? null,
         headers: {
           // Omitted rather than set to "body": this client is standing in for a
           // browser, which must never receive tokens it could store in JS.

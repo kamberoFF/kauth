@@ -11,6 +11,8 @@ import { createKauthClient } from "../../packages/client-sdk/src/index";
 import { renderSessionHook } from "../../packages/client-sdk/dev/hookProbe";
 
 const DEVICE_ID = "4f2b3c5d-6e7f-4a90-8b1c-3d4e5f6a7b80";
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const END_USER = {
   email: "enduser@example.com",
@@ -118,6 +120,63 @@ describe("client SDK (real HTTP against the test server)", () => {
 
       expect((error as { code?: string }).code).toBe("duplicate_email");
       expect((error as Error).name).toBe("KauthError");
+    });
+  });
+
+  describe("device identity (server-issued, captured and echoed)", () => {
+    it("signs up with no device header, captures the minted id, and echoes it on sign-out", async () => {
+      const { owned, publishableKey } = await bootstrap();
+      // No initial deviceId: the server must mint one.
+      const client = createKauthClient({ baseUrl, publishableKey });
+
+      await client.signUp(END_USER);
+      const session = await prisma.session.findFirstOrThrow({
+        where: { project_id: owned.id },
+      });
+      expect(session.device_id).toMatch(UUID_REGEX);
+
+      // Sign-out echoes the captured id, so logout passes requireDevice
+      // without this client ever having generated an id itself.
+      await client.signOut();
+      expect(client.getSnapshot().status).toBe("signedOut");
+    });
+
+    it("replaces the previous session when a client re-uses one device id", async () => {
+      const { owned, makeClient } = await bootstrap();
+      const registered = makeClient();
+      await registered.signUp(END_USER);
+
+      const RETURNING_DEVICE = "5a3c4d6e-7f8a-4b01-9c2d-4e5f6a7b8c91";
+      const returning = makeClient({ deviceId: RETURNING_DEVICE });
+      await returning.signIn({
+        email: END_USER.email,
+        password: END_USER.password,
+      });
+      await returning.signIn({
+        email: END_USER.email,
+        password: END_USER.password,
+      });
+
+      // The second sign-in replaces the first on the same device...
+      const deviceSessions = await prisma.session.findMany({
+        where: { project_id: owned.id, device_id: RETURNING_DEVICE },
+        orderBy: { created_at: "asc" },
+      });
+      expect(deviceSessions).toHaveLength(2);
+      expect(deviceSessions[0]!.status).toBe("REVOKED");
+      expect(deviceSessions[0]!.revoked_reason).toBe(
+        "replaced_by_new_login",
+      );
+      expect(deviceSessions[1]!.status).toBe("ACTIVE");
+
+      // ...while the registration session on its own device survives.
+      const registration = await prisma.session.findFirstOrThrow({
+        where: {
+          project_id: owned.id,
+          device_id: { not: RETURNING_DEVICE },
+        },
+      });
+      expect(registration.status).toBe("ACTIVE");
     });
   });
 

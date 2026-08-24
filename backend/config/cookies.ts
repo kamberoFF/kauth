@@ -36,6 +36,21 @@ export const csrfCookieOptions: CookieOptions = {
 };
 
 /**
+ * Identifies the browser profile, not the session: it is issued by the server
+ * at session creation and echoed on later requests so re-login can replace
+ * that profile's previous session. It drives no auth decision by itself —
+ * a stolen device id alone grants nothing — so unlike the token cookies it is
+ * not scoped to a single endpoint and outlives any one session.
+ */
+export const deviceCookieOptions: CookieOptions = {
+  httpOnly: true,
+  secure: isProd,
+  sameSite: "lax",
+  path: "/",
+  maxAge: 365 * 24 * 60 * 60 * 1000,
+};
+
+/**
  * Holds the OAuth state and PKCE verifier across the round trip to the
  * provider. SameSite must stay "lax" rather than "strict": the user returns via
  * a top-level cross-site navigation, and a strict cookie would not be sent.

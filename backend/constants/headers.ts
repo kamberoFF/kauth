@@ -20,3 +20,4 @@ export const TOKEN_RESPONSE_HEADER = "x-token-response" as const;
 export const CSRF_COOKIE = "kauth_csrf" as const;
 export const SESSION_COOKIE = "kauth_session" as const;
 export const REFRESH_COOKIE = "kauth_refresh" as const;
+export const DEVICE_COOKIE = "kauth_device" as const;
