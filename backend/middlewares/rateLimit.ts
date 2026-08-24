@@ -2,6 +2,7 @@ import { ipKeyGenerator, rateLimit, type Options } from "express-rate-limit";
 import { type Request } from "express";
 import { appError } from "../utils/errors";
 import config from "../config";
+import { RedisRateLimitStore } from "../lib/rateLimitStore";
 
 const MINUTE = 60 * 1000;
 const UNKNOWN_IP = "unknown";
@@ -45,20 +46,32 @@ const byAccount = (req: Request) => {
 };
 
 /**
- * The default memory store is per-process. Once kauth runs more than one
- * instance these limits become per-instance and must move to a shared store.
+ * The default memory store is per-process. The auth-sensitive limiters below
+ * therefore share counts through Redis (ADR 0005), namespaced per limiter
+ * because several key on the same IPs and must never share a bucket.
  */
-function limiter(options: Partial<Options>) {
+function limiter(options: Partial<Options> & { storePrefix?: string }) {
+  const { storePrefix, ...rateLimitOptions } = options;
+
   return rateLimit({
     standardHeaders: "draft-7",
     legacyHeaders: false,
     skip: () => !enabled,
     handler: (_req, _res, next) =>
       next(appError(429, "Too many requests", "rate_limited")),
-    ...options,
+    ...rateLimitOptions,
+    ...(storePrefix
+      ? { store: new RedisRateLimitStore(storePrefix) }
+      : {}),
   });
 }
 
+/**
+ * Deliberately NOT shared (no storePrefix): its job is absorbing floods, not
+ * precision enforcement — a per-instance cap of 300 still caps each replica
+ * at 300, and keeping it off Redis keeps the hot path free of a round-trip
+ * on every request.
+ */
 export const globalLimiter = limiter({
   windowMs: 15 * MINUTE,
   limit: 300,
@@ -68,6 +81,7 @@ export const globalLimiter = limiter({
 export const loginIpLimiter = limiter({
   windowMs: 15 * MINUTE,
   limit: 30,
+  storePrefix: "login-ip",
   keyGenerator: byIp,
 });
 
@@ -75,18 +89,21 @@ export const loginAccountLimiter = limiter({
   windowMs: 15 * MINUTE,
   limit: 8,
   skipSuccessfulRequests: true,
+  storePrefix: "login-account",
   keyGenerator: byAccount,
 });
 
 export const registerLimiter = limiter({
   windowMs: 60 * MINUTE,
   limit: 10,
+  storePrefix: "register",
   keyGenerator: byIp,
 });
 
 export const refreshLimiter = limiter({
   windowMs: 15 * MINUTE,
   limit: 60,
+  storePrefix: "refresh",
   keyGenerator: byIp,
 });
 
@@ -97,6 +114,7 @@ export const refreshLimiter = limiter({
 export const recoveryLimiter = limiter({
   windowMs: 60 * MINUTE,
   limit: 5,
+  storePrefix: "recovery",
   keyGenerator: byAccount,
 });
 
@@ -107,11 +125,13 @@ export const recoveryLimiter = limiter({
 export const tokenSubmissionLimiter = limiter({
   windowMs: 15 * MINUTE,
   limit: 20,
+  storePrefix: "token-submission",
   keyGenerator: byIp,
 });
 
 export const oauthLimiter = limiter({
   windowMs: 15 * MINUTE,
   limit: 40,
+  storePrefix: "oauth",
   keyGenerator: byIp,
 });

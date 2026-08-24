@@ -14,7 +14,7 @@ bun run dev                      # watch mode on :6767
 bun test                         # integration tests, real Postgres
 bun run typecheck                # tsc --noEmit
 bun run lint                     # eslint
-docker compose up -d db          # Postgres on :5433 — required for tests
+docker compose up -d db redis    # Postgres on :5433, Redis on :6379 — required for tests
 bunx --bun prisma migrate deploy
 ```
 

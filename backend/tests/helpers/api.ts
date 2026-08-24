@@ -2,6 +2,7 @@ import type { Server } from "node:http";
 import app from "../../app";
 import { prisma } from "../../lib/prisma";
 import { ensurePlatformProject } from "../../lib/platformProject";
+import { clearAllRateLimitKeys } from "../../lib/rateLimitStore";
 import { PLATFORM_PROJECT_ID } from "../../constants/platform";
 
 export const TEST_DEVICE_ID = "3f1a2b4c-5d6e-4f80-9a1b-2c3d4e5f6071";
@@ -210,6 +211,10 @@ export async function resetDatabase() {
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "projects" RESTART IDENTITY CASCADE',
   );
+  // Shared throttle buckets live outside the projects cascade (they key on
+  // IPs and project-email pairs), so they are cleared separately — otherwise
+  // limits leak across tests even with the NODE_ENV toggle off.
+  await clearAllRateLimitKeys();
 }
 
 /**

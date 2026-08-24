@@ -97,6 +97,14 @@ const schema = z.object({
    * recommendation for single-factor authentication.
    */
   PASSWORD_MIN_LENGTH: z.coerce.number().int().min(8).max(128).default(15),
+
+  /**
+   * Shared throttle store (see ADR 0005). The auth-sensitive rate limiters
+   * count against Redis so limits hold across replicas; when it is
+   * unreachable they degrade to per-instance memory counting with a logged
+   * warning rather than refusing traffic.
+   */
+  REDIS_URL: z.url().default("redis://localhost:6379"),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -159,6 +167,7 @@ const config = {
   cleanup_retention_days: env.CLEANUP_RETENTION_DAYS,
   audit_retention_days: env.AUDIT_RETENTION_DAYS,
   password_min_length: env.PASSWORD_MIN_LENGTH,
+  redis_url: env.REDIS_URL,
   /**
    * ADR 0003: the contract version is kauth's own release version, not a
    * parallel numbering scheme. Read from package.json so a release that

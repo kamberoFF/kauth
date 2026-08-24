@@ -19,8 +19,11 @@ week, closing the "Operations" item below; the login timing oracle is closed;
 the dead `csrf_tokens` table is dropped; session policy
 (server-issued device identity, sliding expiry, inactivity timeout) shipped
 2026-08-24; and password hashing moved to Argon2id with a per-Project
-password policy on 2026-08-24 (see "Password hashing" below). **Next up:
-multi-instance readiness.**
+password policy on 2026-08-24 (see "Password hashing" below). Multi-instance
+readiness landed the same day: the seven auth-sensitive rate limiters now
+count against a shared Redis store (ADR 0005), with per-instance memory as
+the logged degradation path. **Next up: features** — the foundation items
+are closed.
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
 That plan was written in June 2026, before any of it was built; the parts that
@@ -59,7 +62,7 @@ Enough context to read the rest of this file.
   (`SESSION_INACTIVITY_DAYS`, default 14) rejects idle sessions.
 - **Audit log** — `security_events` written for every auth-relevant transition,
   with severity derived from the event type rather than the call site.
-- **Verification** — 264 integration tests against real Postgres covering abuse
+- **Verification** — 268 integration tests against real Postgres covering abuse
   cases (reuse, revoked-session access, throttling, device mismatch, CSRF), run
   in CI alongside typecheck, lint, and `bun audit`.
 
@@ -117,10 +120,16 @@ bodies; `X-Device-Id` survives only as an echo channel), refresh slides
 (default 14 days, `SESSION_INACTIVITY_DAYS`) rejects idle sessions at both
 `requireAuth` and refresh.
 
-### 5. Multi-instance readiness
+### 5. Multi-instance readiness — done 2026-08-24
 
-- The rate limiter's default store is per-process, so every limit becomes
-  per-replica the moment kauth runs more than once. Needs a shared store.
+Shipped as the Redis shared rate-limit store (ADR 0005): a custom
+express-rate-limit `Store` counting through one atomic EVAL per hit, one key
+namespace per limiter, per-instance memory fallback when Redis is
+unreachable, and TTL-based expiry so no cleanup path is needed. The global
+flood-absorbing limiter deliberately stays in-memory. Verified by a
+cross-replica property test (two independent stores see each other's counts)
+and a degradation test (unreachable Redis still counts locally), plus a
+mutation check on the shared-visibility property.
 
 ### 6. Features
 

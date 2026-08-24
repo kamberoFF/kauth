@@ -4,6 +4,7 @@ import { prisma } from "./lib/prisma";
 import { logger } from "./lib/logger";
 import { gracefulShutdown } from "./lib/shutdown";
 import { ensurePlatformProject } from "./lib/platformProject";
+import { closeRateLimitRedis } from "./lib/rateLimitStore";
 
 /**
  * Concurrent replicas serialize on Prisma's own Postgres advisory lock during
@@ -45,7 +46,13 @@ async function main() {
     process.on(signal, () =>
       gracefulShutdown(signal, {
         server,
-        disconnect: () => prisma.$disconnect(),
+        disconnect: async () => {
+          try {
+            await prisma.$disconnect();
+          } finally {
+            closeRateLimitRedis();
+          }
+        },
         timeoutMs: config.shutdown_timeout_ms,
       }),
     );
