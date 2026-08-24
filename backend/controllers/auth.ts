@@ -21,8 +21,10 @@ import { sendMail, verificationEmail } from "../lib/mail";
 import {
   clientContext,
   createSession,
+  isInactive,
   revokeRefreshFamily,
   revokeSessions,
+  SESSION_TTL_MS,
 } from "../lib/sessions";
 import { hashPassword, verifyPassword } from "../lib/passwords";
 import {
@@ -360,6 +362,24 @@ export const refresh: RequestHandler = async (req, res, next) => {
       );
     }
 
+    // Unlike requireAuth's read-only idle check, refresh already owns a
+    // transaction, so the idle session is marked EXPIRED here — the client
+    // that finally came back gets a definitive answer, not a limbo.
+    if (isInactive(session, now)) {
+      await prisma.$transaction([
+        prisma.refreshToken.update({
+          where: { id: storedToken.id },
+          data: { status: "EXPIRED" },
+        }),
+        prisma.session.updateMany({
+          where: { id: storedToken.session_id, status: "ACTIVE" },
+          data: { status: "EXPIRED" },
+        }),
+      ]);
+
+      return next(appError(401, "Session has expired", "session_expired"));
+    }
+
     if (session.device_id && session.device_id !== context.deviceId) {
       return next(
         appError(
@@ -378,9 +398,11 @@ export const refresh: RequestHandler = async (req, res, next) => {
       projectId: context.projectId,
     });
 
-    // The replacement dies with its session rather than outliving it, so the
-    // advertised lifetime and the enforced one agree.
-    const refreshExpiresAt = session.expires_at;
+    // Sliding expiry: activity pushes the session's whole horizon out to a
+    // fresh TTL, and the replacement token dies with the session it belongs
+    // to, so the advertised lifetime and the enforced one agree.
+    const slidingExpiresAt = new Date(now.getTime() + SESSION_TTL_MS);
+    const refreshExpiresAt = slidingExpiresAt;
 
     await prisma.$transaction(async (tx) => {
       await tx.refreshToken.update({
@@ -398,6 +420,7 @@ export const refresh: RequestHandler = async (req, res, next) => {
         where: { id: storedToken.session_id },
         data: {
           last_used_at: now,
+          expires_at: slidingExpiresAt,
           user_agent_last: context.userAgent,
           ip_last: context.ip,
         },

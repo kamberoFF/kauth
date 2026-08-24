@@ -62,6 +62,14 @@ const schema = z.object({
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 
   /**
+   * How long a session may sit unused before it stops counting as live, even
+   * though its sliding expiry has not run out. last_used_at is written on
+   * refresh; an idle session simply stops refreshing and is reclaimed by the
+   * cleanup job once its frozen expiry passes retention.
+   */
+  SESSION_INACTIVITY_DAYS: z.coerce.number().int().positive().default(14),
+
+  /**
    * Bounded wait for in-flight requests to drain on SIGTERM/SIGINT before the
    * process force-exits. A stuck connection must not be able to block
    * `prisma.$disconnect()` long enough that an orchestrator's own SIGKILL
@@ -139,6 +147,7 @@ const config = {
     github: credentialPair(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET),
   },
   log_level: env.LOG_LEVEL,
+  session_inactivity_days: env.SESSION_INACTIVITY_DAYS,
   shutdown_timeout_ms: env.SHUTDOWN_TIMEOUT_MS,
   cleanup_retention_days: env.CLEANUP_RETENTION_DAYS,
   audit_retention_days: env.AUDIT_RETENTION_DAYS,

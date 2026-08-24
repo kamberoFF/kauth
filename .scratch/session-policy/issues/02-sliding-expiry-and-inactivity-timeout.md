@@ -5,8 +5,8 @@ Spec: `.scratch/session-policy/spec.md`
 **What to build:** Session lifetime becomes activity-based instead of
 anchored purely at creation, and an idle session stops counting as live.
 
-**Blocked by:** None (independent of ticket 01's diff surface; can be
-implemented after it lands)
+**Blocked by:** None
+**Status:** done
 
 ## Behavior
 
@@ -29,11 +29,11 @@ implemented after it lands)
 
 ## Acceptance criteria
 
-- [ ] Refresh slides `expires_at` to now + TTL; access tokens minted before
+- [x] Refresh slides `expires_at` to now + TTL; access tokens minted before
       the slide keep working up to the new bound.
-- [ ] A session whose `last_used_at` is older than the inactivity window is
+- [x] A session whose `last_used_at` is older than the inactivity window is
       rejected by `requireAuth` with `session_expired`, even though
       `expires_at` is still in the future.
-- [ ] The same stale session is marked `EXPIRED` and rejected at refresh.
-- [ ] A recently used session within the window passes both checks.
-- [ ] typecheck, lint, and the full integration suite pass.
+- [x] The same stale session is marked `EXPIRED` and rejected at refresh.
+- [x] A recently used session within the window passes both checks.
+- [x] typecheck, lint, and the full integration suite pass.

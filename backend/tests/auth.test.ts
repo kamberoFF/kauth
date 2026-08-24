@@ -11,6 +11,7 @@ import {
 } from "./helpers/api";
 import { prisma } from "../lib/prisma";
 import { generateTokens } from "../lib/jwt";
+import { INACTIVITY_WINDOW_MS, SESSION_TTL_MS } from "../lib/sessions";
 import { UUID_REGEX } from "../constants/regex";
 
 const OTHER_DEVICE_ID = "9f8e7d6c-5b4a-4392-8172-6f5e4d3c2b1a";
@@ -291,6 +292,52 @@ describe("POST /refresh", () => {
     const response = await registerUser();
     return response.body.refreshToken as string;
   }
+
+  it("slides the session expiry forward to a full TTL from now", async () => {
+    const first = await newSession();
+    const session = await prisma.session.findFirstOrThrow({});
+
+    // Age the session so the slide is observable against the original bound.
+    await prisma.session.update({
+      where: { id: session.id },
+      data: { expires_at: new Date(Date.now() + 60_000) },
+    });
+
+    const response = await api("POST", "/refresh", {
+      body: { refreshToken: first },
+    });
+    expect(response.status).toBe(200);
+
+    const after = await prisma.session.findUniqueOrThrow({
+      where: { id: session.id },
+    });
+    expect(after.expires_at.getTime()).toBeGreaterThanOrEqual(
+      Date.now() + SESSION_TTL_MS - 5_000,
+    );
+  });
+
+  it("rejects and expires a session idle beyond the inactivity window", async () => {
+    const first = await newSession();
+    const session = await prisma.session.findFirstOrThrow({});
+
+    // expires_at stays comfortably in the future — inactivity alone kills it.
+    await prisma.session.update({
+      where: { id: session.id },
+      data: { last_used_at: new Date(Date.now() - INACTIVITY_WINDOW_MS - 1) },
+    });
+
+    const response = await api("POST", "/refresh", {
+      body: { refreshToken: first },
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("session_expired");
+
+    const row = await prisma.session.findUniqueOrThrow({
+      where: { id: session.id },
+    });
+    expect(row.status).toBe("EXPIRED");
+  });
 
   it("rotates the refresh token and invalidates the previous one", async () => {
     const first = await newSession();
@@ -574,6 +621,45 @@ describe("multi-tenant isolation", () => {
       accessToken: registeredB.body.accessToken,
     });
     expect(protectedB.status).toBe(200);
+  });
+});
+
+describe("session inactivity timeout", () => {
+  it("rejects an idle session at the access-token boundary even with future expires_at", async () => {
+    const registered = await registerUser();
+
+    const session = await prisma.session.findFirstOrThrow({
+      where: { user_id: registered.body.user.id },
+    });
+    await prisma.session.update({
+      where: { id: session.id },
+      data: { last_used_at: new Date(Date.now() - INACTIVITY_WINDOW_MS - 1) },
+    });
+
+    const response = await api("GET", "/protected", {
+      accessToken: registered.body.accessToken,
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("session_expired");
+  });
+
+  it("keeps a recently used session alive up to its sliding expiry", async () => {
+    const registered = await registerUser();
+    const session = await prisma.session.findFirstOrThrow({
+      where: { user_id: registered.body.user.id },
+    });
+    await prisma.session.update({
+      where: { id: session.id },
+      // Idle for most of the window, but inside it.
+      data: { last_used_at: new Date(Date.now() - INACTIVITY_WINDOW_MS / 2) },
+    });
+
+    const response = await api("GET", "/protected", {
+      accessToken: registered.body.accessToken,
+    });
+
+    expect(response.status).toBe(200);
   });
 });
 

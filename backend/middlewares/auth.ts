@@ -1,5 +1,6 @@
 import { type Request, type RequestHandler } from "express";
 import { verifyAccessToken } from "../lib/jwt";
+import { isInactive } from "../lib/sessions";
 import { prisma } from "../lib/prisma";
 import { readSessionCookie } from "../lib/tokenTransport";
 import { appError } from "../utils/errors";
@@ -47,6 +48,7 @@ export const requireAuth: RequestHandler = async (req, _res, next) => {
         project_id: true,
         status: true,
         expires_at: true,
+        last_used_at: true,
       },
     });
 
@@ -71,6 +73,13 @@ export const requireAuth: RequestHandler = async (req, _res, next) => {
     }
 
     if (session.expires_at <= new Date()) {
+      return next(appError(401, "Session has expired", "session_expired"));
+    }
+
+    // Read-only on purpose: marking the row EXPIRED here would put a write on
+    // every authenticated request. An idle session stops refreshing, so its
+    // expiry freezes and the cleanup job reclaims it after retention.
+    if (isInactive(session, new Date())) {
       return next(appError(401, "Session has expired", "session_expired"));
     }
 

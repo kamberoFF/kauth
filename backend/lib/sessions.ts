@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import bcrypt from "bcrypt";
 import type { Request } from "express";
+import config from "../config";
 import { generateTokens } from "./jwt";
 import { prisma } from "./prisma";
 import type { Prisma } from "../generated/prisma/client";
@@ -8,6 +9,9 @@ import type { Prisma } from "../generated/prisma/client";
 type DbClient = Prisma.TransactionClient | typeof prisma;
 
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+export const INACTIVITY_WINDOW_MS =
+  config.session_inactivity_days * 24 * 60 * 60 * 1000;
 
 const REFRESH_HASH_ROUNDS = 10;
 
@@ -42,6 +46,19 @@ export function clientContext(
 
 export function sessionExpiry() {
   return new Date(Date.now() + SESSION_TTL_MS);
+}
+
+/**
+ * A session idle beyond the window is dead even if its sliding expiry has not
+ * run out. last_used_at is written at creation and on every refresh, so a live
+ * browser session keeps pushing this boundary away; null is treated as never
+ * idle (the column was nullable before any policy read it).
+ */
+export function isInactive(session: { last_used_at: Date | null }, now: Date) {
+  return (
+    session.last_used_at !== null &&
+    now.getTime() - session.last_used_at.getTime() > INACTIVITY_WINDOW_MS
+  );
 }
 
 /**
