@@ -69,12 +69,20 @@ the coordinated session/audit cleanup job (ADR 0004).
 - Raise the minimum length toward NIST-4's 15 characters for single-factor, and
   add an HIBP breach check. The 72-byte cap can go once bcrypt does.
 
-### 3. Close the identity oracles
+### 3. Close the identity oracles — login timing closed 2026-08-24
 
-- Registration returns 409 on a duplicate email, which tells an unauthenticated
-  caller whether an account exists.
-- Login short-circuits before hashing when the user is unknown, so response
-  timing distinguishes the two cases. Hash against a dummy value instead.
+- ~~Login short-circuits before hashing when the user is unknown, so response
+  timing distinguishes the two cases.~~ **Done 2026-08-24** — every login now
+  runs exactly one comparison against a dummy hash when no stored credential
+  exists (`backend/lib/passwords.ts`).
+- Registration returns 409 on a duplicate email, which tells an
+  unauthenticated caller whether an account exists. **Deferred as accepted
+  residual risk** — fully closing it requires register to stop auto-logging-in
+  (a duplicate-email caller cannot receive tokens indistinguishable from the
+  happy path), a register-contract change frozen behind ADR 0003's
+  `X-Kauth-Contract-Version`. Revisit only by explicitly re-deciding that
+  contract question. The `duplicate_username` 409 is not an oracle: usernames
+  are user-chosen public handles. See `.scratch/identity-oracles/`.
 
 ### 4. Session policy
 

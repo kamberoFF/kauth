@@ -20,13 +20,12 @@ import {
   verificationEmail,
 } from "../lib/mail";
 import { revokeSessions } from "../lib/sessions";
+import { hashPassword } from "../lib/passwords";
 import {
   recordSecurityEvent,
   requestContext,
   tryRecordSecurityEvent,
 } from "../lib/securityEvents";
-
-const PASSWORD_HASH_ROUNDS = 10;
 
 /**
  * Recovery endpoints answer identically whether or not the address is
@@ -153,10 +152,7 @@ export const resetPassword: RequestHandler = async (req, res, next) => {
 
     const context = requestContext(req);
     // Hashed before the transaction so the work does not hold a connection.
-    const passwordHash = await bcrypt.hash(
-      parsed.data.password,
-      PASSWORD_HASH_ROUNDS,
-    );
+    const passwordHash = await hashPassword(parsed.data.password);
 
     await prisma.$transaction(async (tx) => {
       const record = await consumeRecoveryToken(
@@ -257,10 +253,7 @@ export const changePassword: RequestHandler = async (req, res, next) => {
       return next(appError(401, "Invalid credentials", "auth_failed"));
     }
 
-    const passwordHash = await bcrypt.hash(
-      parsed.data.newPassword,
-      PASSWORD_HASH_ROUNDS,
-    );
+    const passwordHash = await hashPassword(parsed.data.newPassword);
 
     await prisma.$transaction(async (tx) => {
       await tx.account.update({

@@ -24,6 +24,7 @@ import {
   revokeRefreshFamily,
   revokeSessions,
 } from "../lib/sessions";
+import { hashPassword, verifyPassword } from "../lib/passwords";
 import {
   recordSecurityEvent,
   tryRecordSecurityEvent,
@@ -34,9 +35,7 @@ import {
   sendAuthResponse,
 } from "../lib/tokenTransport";
 
-const PASSWORD_HASH_ROUNDS = 10;
 const REFRESH_HASH_ROUNDS = 10;
-
 export const register: RequestHandler = async (req, res, next) => {
   try {
     const parsed = registerSchema.safeParse(req.body);
@@ -67,7 +66,7 @@ export const register: RequestHandler = async (req, res, next) => {
     if (existingUsername)
       return next(appError(409, "Username is taken", "duplicate_username"));
 
-    const passwordHash = await bcrypt.hash(password, PASSWORD_HASH_ROUNDS);
+    const passwordHash = await hashPassword(password);
 
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -159,9 +158,10 @@ export const login: RequestHandler = async (req, res, next) => {
     });
 
     const credential = user?.accounts[0];
-    const passwordMatches =
-      credential?.password != null &&
-      (await bcrypt.compare(password, credential.password));
+    // One comparison runs on every path — the dummy-hash fallback covers the
+    // unknown-account and no-credential cases — so timing cannot separate
+    // them from a real bad-password attempt.
+    const passwordMatches = await verifyPassword(password, credential?.password);
 
     if (!user || !passwordMatches) {
       await tryRecordSecurityEvent({

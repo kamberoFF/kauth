@@ -171,6 +171,53 @@ describe("POST /login", () => {
     expect(response.body.error.code).toBe("auth_failed");
   });
 
+  it("spends comparable time on an unknown account as on a bad password", async () => {
+    // The timing oracle this guards: skipping the hash comparison when the
+    // account is unknown makes that case return in roughly one DB query,
+    // while a real bad-password attempt pays the full hash cost. The
+    // threshold is relative so the assertion holds at any machine speed.
+    async function timedLogin(body: Record<string, string>) {
+      const start = performance.now();
+      await api("POST", "/login", { body, projectId: project.id });
+      return performance.now() - start;
+    }
+
+    // Warm up lazily-built state (connection pool, any one-time setup) so
+    // neither side's samples carry first-request costs.
+    await timedLogin({
+      email: credentials.email,
+      password: "wrong-password-here",
+    });
+    await timedLogin({
+      email: "nobody@example.com",
+      password: credentials.password,
+    });
+
+    const badPassword: number[] = [];
+    const unknownAccount: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      badPassword.push(
+        await timedLogin({
+          email: credentials.email,
+          password: "wrong-password-here",
+        }),
+      );
+      unknownAccount.push(
+        await timedLogin({
+          email: "nobody@example.com",
+          password: credentials.password,
+        }),
+      );
+    }
+
+    const median = (samples: number[]) =>
+      samples.sort((a, b) => a - b)[Math.floor(samples.length / 2)]!;
+
+    expect(median(unknownAccount)).toBeGreaterThanOrEqual(
+      0.5 * median(badPassword),
+    );
+  });
+
   it("revokes the previous session for the same device instead of deleting it", async () => {
     await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },
