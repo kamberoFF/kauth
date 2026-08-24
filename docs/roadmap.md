@@ -5,20 +5,20 @@ kept current — if it disagrees with the code, the file is wrong.
 
 Last reviewed: 2026-08-24.
 
-**Multi-tenancy pivot in progress.** As of 2026-08-22 kauth is being extended
-into a self-hosted, multi-tenant auth platform — see
-`.scratch/clerk-clone/map.md` and its `clerk-clone-foundation` tickets.
-Tickets 01–04 (the `Project` entity, project-scoping across the full auth
-surface, developer-facing auth bootstrap, and per-project API key issuance)
-are done and merged, plus a same-day gap-closing ticket on audit-log
-project scoping and OAuth validation hygiene; the item below still applies
-to everything built *before* this pivot started, and multi-tenancy itself is
-no longer "deliberately last" — see the map's reconciliation note for why
-schema work went ahead of the rest of this backlog. Tickets 05/06 (the SDK
-packages) are next in the tracker's dependency graph; the "Before starting
-the SDK" gate below was satisfied on 2026-08-24 by the ops-hardening tickets
-(structured logging, migrate-on-startup/graceful shutdown, liveness-readiness
-split, non-root container, cleanup job).
+**Multi-tenancy pivot: foundation complete.** As of 2026-08-22 kauth has been
+extended into a self-hosted, multi-tenant auth platform — see
+`.scratch/clerk-clone/map.md` and its `clerk-clone-foundation` tickets. All
+seven are done and merged (2026-08-23/24): the `Project` entity,
+project-scoping across the full auth surface, developer-facing auth
+bootstrap, per-project API key issuance, both SDK packages (which enforce
+ADR 0003's contract-version header), and a same-day gap-closing ticket on
+audit-log project scoping and OAuth validation hygiene. The ops-hardening
+tickets (structured logging, migrate-on-startup/graceful shutdown,
+liveness-readiness split, non-root container, cleanup job) landed the same
+week, closing the "Operations" item below; the login timing oracle is closed;
+the dead `csrf_tokens` table is dropped; and session policy
+(server-issued device identity, sliding expiry, inactivity timeout) shipped
+2026-08-24. **Next up: password hashing**, then multi-instance readiness.
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
 That plan was written in June 2026, before any of it was built; the parts that
@@ -45,9 +45,19 @@ Enough context to read the rest of this file.
   tokens; a completed reset revokes every session.
 - **Abuse controls** — per-IP and per-account rate limits, stateless signed
   double-submit CSRF, trusted-origin validation.
+- **Multi-tenancy** — every user-owned table project-scoped; a reserved
+  platform project dogfoods the same auth stack for developers, who issue
+  per-project publishable/secret API keys tier-authorized at the edge.
+- **SDKs** — `packages/backend-sdk` (secret-key, contract-version enforcing)
+  and `packages/client-sdk` (publishable-key headless auth + React session
+  hook).
+- **Session policy** — device ids are server-issued (HttpOnly cookie plus
+  `deviceId` in session-creating bodies; `X-Device-Id` is an echo channel),
+  refresh slides expiry on a rolling 30d window, and an inactivity timeout
+  (`SESSION_INACTIVITY_DAYS`, default 14) rejects idle sessions.
 - **Audit log** — `security_events` written for every auth-relevant transition,
   with severity derived from the event type rather than the call site.
-- **Verification** — 96 integration tests against real Postgres covering abuse
+- **Verification** — 247 integration tests against real Postgres covering abuse
   cases (reuse, revoked-session access, throttling, device mismatch, CSRF), run
   in CI alongside typecheck, lint, and `bun audit`.
 
@@ -106,35 +116,16 @@ has the items above open.
 - MFA (TOTP) and passkeys.
 - RBAC enforcement. `Role` exists on the user, appears in no token, and gates
   nothing.
-- Multi-tenancy.
 - Asymmetric access-token signing with `kid` and a key-rotation policy, if other
   services ever need to verify tokens without sharing the secret.
 
-## Before starting the SDK
+## Before starting the SDK — satisfied and shipped 2026-08-24
 
-The SDK is the reason the contract has to settle first — a public wrapper turns
-today's mistakes into permanent ones. Start it when all of these hold:
-
-- Session rotation and revocation rules are stable. **Done.**
-- Token transport is final for the supported client types. **Done.**
-- Core auth events are observable. **Done** — structured request logging with
-  request/user/session correlation landed 2026-08-24 alongside the existing
-  audit log.
-- Integration tests protect the main flows. **Done.**
-- The response and error contract is versioned and consistent. Decision done
-  2026-08-23 (ADR 0003: `X-Kauth-Contract-Version`, exact-match SDK
-  enforcement, no multi-version hosting). The header itself and the SDK-side
-  check are built with tickets 05/06, since the SDKs are what enforce it.
-
-So: the gate is met as of the ops-hardening work (2026-08-24). Tickets 05/06
-are unblocked.
-
-~~Operations hardening (section "1. Operations" above) still hasn't happened,
-so it remains a real, deliberate blocker on 05 and 06 beyond what the ticket
-tracker shows, not a stale leftover from before the pivot.~~ Resolved
-2026-08-24 — see section "1. Operations".
-Revisit only by explicitly re-deciding this, not by treating "04 is done" as
-sufficient.
+Kept as history: the gate (stable rotation/revocation rules, final token
+transport, observable auth events, integration-test coverage, and ADR 0003's
+versioned contract) was met via the ops-hardening tickets, and tickets 05/06
+built both SDK packages against it. Any further contract change now flows
+through ADR 0003's version-bump discipline rather than this gate.
 
 ## Deliberately not doing
 

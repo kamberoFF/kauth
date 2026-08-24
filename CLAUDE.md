@@ -36,7 +36,8 @@ backend/
   routes/            thin; middleware composition per endpoint
   middlewares/       auth, csrf, device, origin, rateLimit, error
   lib/               sessions, jwt, tokenTransport, securityEvents,
-                     recoveryTokens, mail, validation, oauth/providers
+                     recoveryTokens, passwords, mail, logger,
+                     platformProject, validation, oauth/providers
   prisma/            schema + migrations
   tests/             integration suites; helpers/api.ts has the request helpers
 frontend/            Vite + React scaffold, no auth client yet

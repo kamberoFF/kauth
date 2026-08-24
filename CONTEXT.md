@@ -28,3 +28,17 @@ built-against version and the server's — see ADR 0003. Deliberately not
 from one running instance at once, so there is no per-caller version
 selection, only a single current one.
 _Avoid_: API version (implies multi-version hosting, which this isn't).
+
+**Device id**:
+A server-issued identifier for one browser profile or app installation.
+Kauth mints it when a session is created and hands it back via the HttpOnly
+`kauth_device` cookie plus a `deviceId` field in the response body; clients
+echo it on later requests (cookie first, `X-Device-Id` header as the channel
+for non-cookie clients). It drives two policies — re-login replaces that
+device's previous session (`replaced_by_new_login`) and refresh must match
+the issuing context — but it authorizes nothing by itself: possessing a
+device id grants no access. Deliberately not client-chosen (a client's own
+random UUID was a risk signal doing an auth decision's job), and not a
+fingerprint: it identifies an installation, not a person or physical device.
+_Avoid_: device fingerprint; "client-supplied device id" (obsolete — the
+server owns issuance now).

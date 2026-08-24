@@ -15,9 +15,9 @@ The backend is real and tested; the frontend is a scaffold.
 
 | | |
 | --- | --- |
-| **Works today** | Registration, login, logout, refresh rotation with reuse detection, social login, email verification, password reset and change, CSRF, rate limiting, audit log. 96 integration tests against real Postgres, gated by CI. |
-| **Not built yet** | MFA, passkeys, RBAC enforcement, multi-tenancy, an SDK, and the entire operational layer (structured logging, graceful shutdown, a production container). |
-| **Known weaknesses** | bcrypt cost 10 rather than Argon2id, a client-supplied device id, and registration still leaks whether an email exists. |
+| **Works today** | Multi-tenant projects with per-project isolation, registration, login, logout, refresh rotation with reuse detection, social login, email verification, password reset and change, server-issued device identity, sliding session expiry with an inactivity timeout, CSRF, rate limiting, audit log, structured logging, migrate-on-startup with graceful shutdown, liveness/readiness split, a non-root production container, and a coordinated session/audit cleanup job. Backend and client SDK packages ship alongside the service. 247 integration tests against real Postgres, gated by CI. |
+| **Not built yet** | MFA, passkeys, RBAC enforcement, an Argon2id password migration, HIBP breach checks, and a shared rate-limit store for multi-replica deployments. |
+| **Known weaknesses** | Password hashing is still bcrypt cost 10 (the Argon2id move is the next roadmap item), and registration's 409 on a duplicate email discloses account existence — accepted residual risk, frozen behind the versioned contract. |
 
 The full list, with reasoning, is in [docs/roadmap.md](docs/roadmap.md).
 
@@ -30,6 +30,7 @@ missing as plainly as what works — that honesty is part of the point.
 ```
 backend/     Bun + Express 4 + Prisma 7 + PostgreSQL 17 — the actual service
 frontend/    Vite + React 19 + Tailwind 4 — scaffold only, no auth client yet
+packages/    backend-sdk (secret-key, server-only) and client-sdk (publishable-key)
 docs/        Audit, remediation history, roadmap
 ```
 
