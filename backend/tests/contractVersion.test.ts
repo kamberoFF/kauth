@@ -23,4 +23,19 @@ describe("X-Kauth-Contract-Version", () => {
     expect(response.status).toBe(404);
     expect(response.headers.get(CONTRACT_VERSION_HEADER)).toBe(packageVersion);
   });
+
+  it("stays in lockstep with what the backend SDK was built against", async () => {
+    // ADR 0003 makes exact match the whole mechanism, so the SDK's baked-in
+    // constant drifting from the server's package version would break every
+    // integration silently. This repo is where both live; hold them together.
+    const sdkPackage = await Bun.file(
+      new URL("../../packages/backend-sdk/package.json", import.meta.url),
+    ).json();
+    const { CONTRACT_VERSION } = await import(
+      "../../packages/backend-sdk/src/version"
+    );
+
+    expect(CONTRACT_VERSION).toBe(packageVersion);
+    expect(sdkPackage.version).toBe(packageVersion);
+  });
 });

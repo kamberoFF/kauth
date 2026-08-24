@@ -77,6 +77,36 @@ describe("backend SDK (real HTTP against the test server)", () => {
       expect(verified.userId).toBeDefined();
     });
 
+    it("rejects a session revoked by refresh-token reuse detection", async () => {
+      const { owned, sdk, publishable } = await bootstrap();
+
+      // A second login mints a fresh session; replaying its already-consumed
+      // refresh token trips reuse detection, which revokes that session —
+      // the "reuse-flagged" shape of a dead session.
+      const login = await api("POST", "/login", {
+        body: { email: "enduser@example.com", password: "correct-horse-battery" },
+        apiKey: publishable,
+      });
+      const stolen = login.body.refreshToken as string;
+      void (await api("POST", "/refresh", { body: { refreshToken: stolen } }));
+      await api("POST", "/refresh", { body: { refreshToken: stolen } });
+
+      const flagged = await prisma.session.findFirstOrThrow({
+        where: { project_id: owned.id },
+        orderBy: { created_at: "desc" },
+      });
+
+      let error: unknown;
+      try {
+        await sdk.verifySession(flagged.id);
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect((error as { code?: string }).code).toBe("session_inactive");
+      expect(flagged.status).toBe("REVOKED");
+    });
+
     it("rejects a revoked session in real time — no cached/stale result", async () => {
       const { sdk, accessToken, sessionId } = await bootstrap();
       await sdk.revokeSession(sessionId);
@@ -225,6 +255,9 @@ describe("backend SDK (real HTTP against the test server)", () => {
       }
 
       expect(error).toBeInstanceOf(Error);
+      expect((error as { code?: string }).code).toBe(
+        "contract_version_mismatch",
+      );
       const message = (error as Error).message;
       expect(message).toContain("may have already completed");
       expect(message.toLowerCase()).toContain("retried");
