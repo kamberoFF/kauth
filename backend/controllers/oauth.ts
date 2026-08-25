@@ -13,6 +13,7 @@ import {
   type OAuthProvider,
 } from "../lib/oauth/providers";
 import {
+  MFA_CHALLENGE_TTL_SECONDS,
   consumeRecoveryToken,
   issueRecoveryToken,
 } from "../lib/recoveryTokens";
@@ -354,6 +355,30 @@ export const exchangeOAuthCode: RequestHandler = async (req, res, next) => {
     // Project id comes from the exchange record itself, same as refresh
     // derives it from the refresh-token row - it's already project-scoped.
     const context = clientContext(req, deviceId, record.project_id);
+
+    // Social sign-ins are challenged uniformly with password logins: an
+    // enrolled user pauses here too. The provider identity has already been
+    // proven at this point; what is still missing is the second factor.
+    const user = await prisma.user.findUnique({
+      where: { id: record.user_id },
+      select: { mfa_enrolled_at: true },
+    });
+
+    if (user?.mfa_enrolled_at) {
+      const challengeToken = await issueRecoveryToken(
+        record.user_id,
+        "MFA_CHALLENGE",
+        record.project_id,
+        context.deviceId,
+      );
+
+      return res.status(200).json({
+        mfaRequired: true,
+        challengeToken,
+        expiresInSeconds: MFA_CHALLENGE_TTL_SECONDS,
+        deviceId: context.deviceId,
+      });
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       await revokeSessions(

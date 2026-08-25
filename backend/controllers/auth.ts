@@ -16,7 +16,7 @@ import {
 } from "../utils/requestGuards";
 import { CREDENTIAL_PROVIDER } from "../constants/providers";
 import config from "../config";
-import { issueRecoveryToken } from "../lib/recoveryTokens";
+import { MFA_CHALLENGE_TTL_SECONDS, issueRecoveryToken } from "../lib/recoveryTokens";
 import { sendMail, verificationEmail } from "../lib/mail";
 import {
   clientContext,
@@ -211,6 +211,26 @@ export const login: RequestHandler = async (req, res, next) => {
       return next(
         appError(403, "Email address not confirmed", "email_not_verified"),
       );
+    }
+
+    // An enrolled user's sign-in pauses here instead of creating a session:
+    // possession of the password alone must not be enough. The prior session
+    // deliberately survives until phase two — revoking now would let whoever
+    // holds the challenge token lock the real user out entirely.
+    if (user.mfa_enrolled_at) {
+      const challengeToken = await issueRecoveryToken(
+        user.id,
+        "MFA_CHALLENGE",
+        projectId,
+        context.deviceId,
+      );
+
+      return res.status(200).json({
+        mfaRequired: true,
+        challengeToken,
+        expiresInSeconds: MFA_CHALLENGE_TTL_SECONDS,
+        deviceId: context.deviceId,
+      });
     }
 
     const result = await prisma.$transaction(async (tx) => {

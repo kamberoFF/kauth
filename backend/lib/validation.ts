@@ -48,6 +48,16 @@ export const oauthExchangeSchema = z.object({
   code: z.string().min(1),
 });
 
+/**
+ * Phase two of an enrolled sign-in. Same shape-only rule as mfaCodeSchema:
+ * a well-formed but wrong challenge token or code is an auth failure, not a
+ * validation failure.
+ */
+export const mfaChallengeSchema = z.object({
+  challengeToken: z.string().min(1),
+  code: z.string().min(1).max(20),
+});
+
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
   newPassword,

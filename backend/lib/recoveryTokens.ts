@@ -17,6 +17,9 @@ const TTL_MS: Record<TokenType, number> = {
   MFA_CHALLENGE: 5 * 60 * 1000,
 };
 
+/** Advertised to clients next to the challenge token as `expiresInSeconds`. */
+export const MFA_CHALLENGE_TTL_SECONDS = TTL_MS.MFA_CHALLENGE / 1000;
+
 /**
  * A fast hash is correct here: the token carries 256 bits of entropy, so there
  * is nothing for an offline attacker to brute force. Only the hash is stored,
@@ -30,6 +33,7 @@ export async function issueRecoveryToken(
   userId: string,
   type: TokenType,
   projectId: string,
+  deviceId?: string,
   client: DbClient = prisma,
 ) {
   const token = crypto.randomBytes(TOKEN_BYTES).toString("base64url");
@@ -48,6 +52,8 @@ export async function issueRecoveryToken(
       token_type: type,
       token_hash: hashToken(token),
       expires_at: new Date(now.getTime() + TTL_MS[type]),
+      // MFA_CHALLENGE only: phase two must arrive from the same device.
+      ...(deviceId !== undefined && { device_id: deviceId }),
     },
   });
 

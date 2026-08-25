@@ -1,12 +1,20 @@
 import { type RequestHandler } from "express";
 import { prisma } from "../lib/prisma";
-import { mfaCodeSchema } from "../lib/validation";
+import { mfaCodeSchema, mfaChallengeSchema } from "../lib/validation";
 import { appError } from "../utils/errors";
-import { requireProjectId, requireUserId } from "../utils/requestGuards";
+import { requireDeviceId, requireProjectId, requireUserId } from "../utils/requestGuards";
 import { buildOtpauthUri, generateTotpSecret, matchTotpStep } from "../lib/totp";
 import { decrypt, encrypt } from "../lib/cryptoBox";
 import { generateBackupCodes, hashBackupCode } from "../lib/backupCodes";
-import { recordSecurityEvent, requestContext } from "../lib/securityEvents";
+import { peekRecoveryToken } from "../lib/recoveryTokens";
+import {
+  clientContext,
+  createSession,
+  revokeSessions,
+} from "../lib/sessions";
+import { sendAuthResponse } from "../lib/tokenTransport";
+import { recordSecurityEvent, requestContext, tryRecordSecurityEvent } from "../lib/securityEvents";
+import { AppError } from "../types/errors";
 
 /**
  * A stored secret with a null `mfa_enrolled_at` is a *pending* enrollment:
@@ -174,6 +182,214 @@ export const getMfaStatus: RequestHandler = async (req, res, next) => {
         backupCodesRemaining: user._count.backupCodes,
       }),
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Phase two of an enrolled sign-in. The challenge token was issued by login
+ * or the OAuth exchange, bound to the device that started the flow; completing
+ * it runs the exact completion sequence a single-phase sign-in would have run.
+ *
+ * Every bad token state — unknown, wrong type, expired, already consumed, or
+ * bound to a different device — answers the same `400 token_invalid`, so a
+ * presenter learns nothing about which check failed. A wrong *code*, by
+ * contrast, is `401 mfa_code_invalid` and leaves the token live until its TTL.
+ */
+export const verifyMfaChallenge: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = mfaChallengeSchema.safeParse(req.body);
+    if (!parsed.success)
+      return next(appError(400, "Invalid input", "validation"));
+
+    const deviceId = requireDeviceId(req);
+
+    // Peeked, not consumed: spending single-use-ness before the code checks
+    // out would let one typo brick a login that should still be recoverable.
+    const record = await peekRecoveryToken(parsed.data.challengeToken);
+
+    if (
+      !record ||
+      record.token_type !== "MFA_CHALLENGE" ||
+      record.consumed_at ||
+      record.expires_at <= new Date() ||
+      // resolveDevice mints an id when none is presented, so a cookie-less
+      // caller can never accidentally satisfy this comparison.
+      record.device_id !== deviceId
+    ) {
+      return next(appError(400, "Invalid or expired challenge", "token_invalid"));
+    }
+
+    const context = clientContext(req, deviceId, record.project_id);
+
+    const user = await prisma.user.findUnique({
+      where: { id: record.user_id },
+      select: {
+        id: true,
+        mfa_enrolled_at: true,
+        totp_secret: true,
+        last_totp_step: true,
+      },
+    });
+
+    // A challenge can outlive the enrollment it was issued for (disabled in
+    // between); without an enrollment there is nothing left to verify.
+    if (!user?.mfa_enrolled_at) {
+      return next(appError(400, "Invalid or expired challenge", "token_invalid"));
+    }
+
+    const recordLoginFailed = () =>
+      tryRecordSecurityEvent({
+        type: "LOGIN_FAILED",
+        userId: record.user_id,
+        projectId: record.project_id,
+        ip: context.ip,
+        userAgent: context.userAgent,
+        metadata: { reason: "mfa_code_invalid" },
+      });
+
+    const matchedStep = user.totp_secret
+      ? matchTotpStep(decrypt(user.totp_secret), parsed.data.code)
+      : null;
+
+    let backupCodeId: string | null = null;
+
+    if (matchedStep === null) {
+      const backup = await prisma.mfaBackupCode.findFirst({
+        where: {
+          user_id: user.id,
+          code_hash: hashBackupCode(parsed.data.code),
+          used_at: null,
+        },
+        select: { id: true },
+      });
+
+      backupCodeId = backup?.id ?? null;
+    }
+
+    if (matchedStep === null && backupCodeId === null) {
+      await recordLoginFailed();
+      return next(appError(401, "Invalid code", "mfa_code_invalid"));
+    }
+
+    // Fast path of the replay guard: anything at or below the last used step
+    // is dead on arrival. The transaction below re-enforces this atomically.
+    if (
+      matchedStep !== null &&
+      user.last_totp_step !== null &&
+      matchedStep <= user.last_totp_step
+    ) {
+      await recordLoginFailed();
+      return next(appError(401, "Invalid code", "mfa_code_invalid"));
+    }
+
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        // Single-use gate: losing this conditional claim means a concurrent
+        // request completed the challenge first.
+        const claimed = await tx.recoveryToken.updateMany({
+          where: { id: record.id, consumed_at: null },
+          data: { consumed_at: new Date() },
+        });
+
+        if (claimed.count === 0) {
+          throw appError(400, "Invalid or expired challenge", "token_invalid");
+        }
+
+        if (matchedStep !== null) {
+          // Compare-and-set against the stored step: only strictly newer
+          // steps count, no matter what earlier reads saw.
+          const advanced = await tx.user.updateMany({
+            where: {
+              id: user.id,
+              OR: [
+                { last_totp_step: null },
+                { last_totp_step: { lt: matchedStep } },
+              ],
+            },
+            data: { last_totp_step: matchedStep },
+          });
+
+          if (advanced.count === 0) {
+            throw appError(401, "Invalid code", "mfa_code_invalid");
+          }
+        }
+
+        await revokeSessions(
+          tx,
+          { user_id: record.user_id, device_id: context.deviceId },
+          "replaced_by_new_login",
+        );
+
+        const created = await createSession(
+          tx,
+          record.user_id,
+          record.project_id,
+          context,
+        );
+
+        if (backupCodeId !== null) {
+          const burned = await tx.mfaBackupCode.updateMany({
+            where: { id: backupCodeId, used_at: null },
+            data: { used_at: new Date() },
+          });
+
+          if (burned.count === 0) {
+            throw appError(401, "Invalid code", "mfa_code_invalid");
+          }
+
+          await recordSecurityEvent(
+            {
+              type: "BACKUP_CODE_USED",
+              userId: record.user_id,
+              sessionId: created.session.id,
+              projectId: record.project_id,
+              ip: context.ip,
+              userAgent: context.userAgent,
+            },
+            tx,
+          );
+        }
+
+        await recordSecurityEvent(
+          {
+            type: "LOGIN_SUCCESS",
+            userId: record.user_id,
+            sessionId: created.session.id,
+            projectId: record.project_id,
+            ip: context.ip,
+            userAgent: context.userAgent,
+            metadata: {
+              method: matchedStep !== null ? "totp" : "backup_code",
+            },
+          },
+          tx,
+        );
+
+        return created;
+      });
+
+      sendAuthResponse(
+        req,
+        res,
+        {
+          accessToken: result.accessToken.token,
+          refreshToken: result.refreshToken.token,
+        },
+        {},
+        200,
+        deviceId,
+      );
+    } catch (error) {
+      // A code rejection inside the transaction rolls everything back and
+      // must still leave the same audit trail as the fast-path rejections.
+      if (error instanceof AppError && error.code === "mfa_code_invalid") {
+        await recordLoginFailed();
+      }
+
+      throw error;
+    }
   } catch (error) {
     next(error);
   }

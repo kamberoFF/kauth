@@ -8,7 +8,7 @@ single-use challenge token bridges the phases; the contract version bumps
 to 0.4.0 across backend and both SDKs.
 
 **Blocked by:** 01
-**Status:** ready-for-agent
+**Status:** done
 
 ## Behavior
 
@@ -51,27 +51,50 @@ to 0.4.0 across backend and both SDKs.
 
 ## Acceptance criteria
 
-- [ ] Enrolled password login returns the 200 challenge shape with no
+- [x] Enrolled password login returns the 200 challenge shape with no
       cookies set and no session rows created.
-- [ ] Phase two completes with body tokens for opt-in clients and cookies
+- [x] Phase two completes with body tokens for opt-in clients and cookies
       for `cookieClient()` browsers; prior same-device session is revoked
       `replaced_by_new_login` exactly as a normal login would.
-- [ ] Challenge token single-use: second presentation → `400 token_invalid`
+- [x] Challenge token single-use: second presentation → `400 token_invalid`
       (**mutation check**: drop the consumed-at guard and confirm this test
       goes red).
-- [ ] Device binding: phase two from a different device id → uniform
+- [x] Device binding: phase two from a different device id → uniform
       `400 token_invalid` (**mutation check**: remove the comparison and
       confirm this test goes red).
-- [ ] Expired (>5 min) and never-issued tokens → `400 token_invalid`.
-- [ ] Reissuing a challenge invalidates the previous token.
-- [ ] TOTP ±1 step accepted, ±2 rejected; reusing the exact matched step
+- [x] Expired (>5 min) and never-issued tokens → `400 token_invalid`.
+- [x] Reissuing a challenge invalidates the previous token.
+- [x] TOTP ±1 step accepted, ±2 rejected; reusing the exact matched step
       later fails via the replay guard (**mutation check**: bypass
       `last_totp_step` and confirm this test goes red).
-- [ ] Backup code completes a challenge exactly once; reuse fails.
-- [ ] Wrong code → `401 mfa_code_invalid` + `LOGIN_FAILED`
+- [x] Backup code completes a challenge exactly once; reuse fails.
+- [x] Wrong code → `401 mfa_code_invalid` + `LOGIN_FAILED`
       `mfa_code_invalid`; token still usable within TTL.
-- [ ] Enrolled OAuth exchange returns the same challenge shape; phase two
+- [x] Enrolled OAuth exchange returns the same challenge shape; phase two
       yields a normal session with provider-derived context preserved.
-- [ ] Server advertises `x-kauth-contract-version: 0.4.0`; lockstep test
+- [x] Server advertises `x-kauth-contract-version: 0.4.0`; lockstep test
       across backend + both SDKs green.
-- [ ] typecheck, lint, full integration suite pass.
+- [x] typecheck, lint, full integration suite pass.
+
+## Comments
+
+**2026-08-25 (implement agent).** Shipped as one commit. Implementation notes:
+
+- The consumed-at control lives in two layers — the peek gate and the
+  conditional claim inside the transaction (the latter closes the
+  concurrent-race window). The replay guard is likewise two-layer: a fast-path
+  pre-check and an atomic compare-and-set in the transaction. Both layers are
+  required (the peek gate alone would answer a consumed token's *wrong code*
+  with 401 instead of the uniform 400; the pre-check alone has a read-check
+  race), so the mutation checks above pass only when **both** layers of a
+  control are killed at once — verified red in that configuration.
+- Tests must present a step strictly newer than the enrollment's recorded
+  `last_totp_step` (`freshCode` helper): completing within the same 30s window
+  as enrollment is *correctly* rejected as replay, which the tests otherwise
+  trip over.
+- A challenge whose enrollment vanished between phases answers the uniform
+  `400 token_invalid` (no session can be completed against a user with no
+  second factor). Ticket 04 may want to revisit this when defining what
+  disabling does to outstanding challenges.
+- `issueRecoveryToken` grew an optional `deviceId` argument (MFA_CHALLENGE
+  only); all existing call sites are unaffected.
