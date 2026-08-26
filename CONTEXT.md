@@ -91,3 +91,24 @@ every request is refused until they enroll — except enrollment itself and
 sign-out, so self-service escape always exists. Sign-in is never blocked;
 the mandate walls usage, not entry.
 _Avoid_: trial, exemption.
+
+**Role**:
+The `USER` | `ADMIN` column every User carries, scoped per Project like
+everything user-owned. Its one server-defined meaning: ADMIN **inside the
+reserved platform Project** marks Platform staff. Elsewhere it gates nothing
+yet — per-project tenant roles wait for a consuming app to name them. Every
+access token carries a role claim read at mint time, but kauth's own
+authorization never reads it back: requireAuth re-selects the row on every
+request, so a demotion bites immediately and the stale claim is cosmetic
+(ADR 0007).
+_Avoid_: permission (none exist); "admin" unqualified (always ask: admin of
+which Project?).
+
+**Platform staff**:
+An operator of one kauth instance: an ADMIN User of the platform Project,
+able to list all Projects, list any Project's users, and view or revoke any
+Session through `/admin/*` — session-authenticated only, never reachable by
+API key. Bootstrapped by `scripts/promoteStaff.ts`, extended thereafter by
+staff promoting other platform users.
+_Avoid_: superuser; global admin (there is no cross-instance tier); "kauth
+admin" (ambiguous between staff and a tenant's own admins).

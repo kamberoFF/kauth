@@ -98,7 +98,28 @@ needs, and session tokens in a URL would leak into history and referrers.
 | GET | `/csrf-token` | Issues the CSRF cookie and returns its value. |
 | GET | `/protected` | Demo endpoint behind `requireAuth`. |
 
+### Platform staff
+
+Session-authenticated kauth operators (`Role.ADMIN` inside the reserved
+platform Project — see `docs/adr/0007-role-claim-rides-database-decides.md`).
+Never reachable by API key: a key authenticates as a Project, and the Project
+inventory is exactly what a key must never see. The access token carries a
+`role` claim, but authorization re-reads the row on every request, so role
+changes take effect immediately.
+
+| Method | Path | Notes |
+| ------ | ---- | ----- |
+| GET | `/admin/projects` | All Projects across tenants. |
+| GET | `/admin/projects/:projectId/users` | Any Project's users. |
+| GET | `/admin/sessions/:sessionId` | View any Session. |
+| DELETE | `/admin/sessions/:sessionId` | Revoke any ACTIVE Session (`staff_revoked`). |
+| POST | `/admin/users/:userId/role` | Set `USER`/`ADMIN` on platform users; self-change refused. |
+
+The first staff member is bootstrapped outside HTTP:
+`bun scripts/promoteStaff.ts --email dev@example.com`.
+
 ### Errors
+
 
 Every failure returns the same shape:
 

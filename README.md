@@ -15,9 +15,9 @@ The backend is real and tested; the frontend is a scaffold.
 
 | | |
 | --- | --- |
-| **Works today** | Multi-tenant projects with per-project isolation, registration, login, logout, refresh rotation with reuse detection, social login, email verification, password reset and change, server-issued device identity, sliding session expiry with an inactivity timeout, CSRF, rate limiting, audit log, structured logging, migrate-on-startup with graceful shutdown, liveness/readiness split, a non-root production container, and a coordinated session/audit cleanup job. Backend and client SDK packages ship alongside the service. 247 integration tests against real Postgres, gated by CI. |
-| **Not built yet** | MFA, passkeys, RBAC enforcement, an Argon2id password migration, HIBP breach checks, and a shared rate-limit store for multi-replica deployments. |
-| **Known weaknesses** | Password hashing is still bcrypt cost 10 (the Argon2id move is the next roadmap item), and registration's 409 on a duplicate email discloses account existence — accepted residual risk, frozen behind the versioned contract. |
+| **Works today** | Multi-tenant projects with per-project isolation, registration, login, logout, refresh rotation with reuse detection, social login, email verification, password reset and change, TOTP MFA with backup codes and two-phase login (plus an optional per-project mandate), server-issued device identity, sliding session expiry with an inactivity timeout, Argon2id password hashing with a per-project password policy, a platform-staff surface behind DB-fresh RBAC enforcement, CSRF, rate limiting backed by a shared Redis store for multi-replica deployments, audit log, structured logging, migrate-on-startup with graceful shutdown, liveness/readiness split, a non-root production container, and a coordinated session/audit cleanup job. Backend and client SDK packages ship alongside the service. 395 integration tests against real Postgres, gated by CI. |
+| **Not built yet** | Passkeys and asymmetric access-token signing (`kid` + rotation) — the last two roadmap features. Per-project tenant-admin roles are deferred until a consuming app names its requirements. |
+| **Known weaknesses** | Registration's 409 on a duplicate email discloses account existence — accepted residual risk, frozen behind the versioned contract. |
 
 The full list, with reasoning, is in [docs/roadmap.md](docs/roadmap.md).
 

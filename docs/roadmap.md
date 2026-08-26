@@ -24,8 +24,10 @@ readiness landed the same day: the seven auth-sensitive rate limiters now
 count against a shared Redis store (ADR 0005), with per-instance memory as
 the logged degradation path. MFA — TOTP second factors, backup codes,
 two-phase login, and an optional project mandate — shipped 2026-08-25/26
-(see "Features" below). **Next up:** what remains of the feature list —
-passkeys, RBAC enforcement, and asymmetric access-token signing.
+(see "Features" below), and RBAC enforcement followed the same day: the role
+claim rides every access token while authorization stays DB-fresh, and a
+platform-staff surface landed under `/admin/*` (ADR 0007). **Next up:** what
+remains of the feature list — passkeys and asymmetric access-token signing.
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
 That plan was written in June 2026, before any of it was built; the parts that
@@ -64,9 +66,10 @@ Enough context to read the rest of this file.
   (`SESSION_INACTIVITY_DAYS`, default 14) rejects idle sessions.
 - **Audit log** — `security_events` written for every auth-relevant transition,
   with severity derived from the event type rather than the call site.
-- **Verification** — 359 integration tests against real Postgres covering
+- **Verification** — 395 integration tests against real Postgres covering
   abuse cases (reuse, revoked-session access, throttling, device mismatch,
-  CSRF, MFA challenges), run in CI alongside typecheck, lint, and `bun audit`.
+  CSRF, MFA challenges, staff-gate bypasses), run in CI alongside typecheck,
+  lint, and `bun audit`.
 
 ## Next
 
@@ -150,10 +153,26 @@ Deliberately ordered last: none of what remains was worth building before
 the foundation above closed. Still open:
 
 - Passkeys.
-- RBAC enforcement. `Role` exists on the user, appears in no token, and gates
-  nothing.
 - Asymmetric access-token signing with `kid` and a key-rotation policy, if other
   services ever need to verify tokens without sharing the secret.
+
+### 7. Features — RBAC enforcement done 2026-08-26
+
+Shipped as the `rbac-enforcement` tickets: every access token now mints with
+a `role` claim (register, login, OAuth exchange, MFA challenge completion,
+and each refresh rotation), but authorization never reads it back —
+`requireAuth` selects the user's role in its existing per-request query and
+the new `requirePlatformStaff` gate trusts only that DB-fresh value, so a
+demoted admin loses access on their next request even with a stale ADMIN
+claim in hand (ADR 0007). The claim exists for consumers and a future
+asymmetric-signing world. ADMIN inside the reserved platform Project means
+platform staff, gated to `/admin/*`: list all Projects, list any Project's
+users, view/revoke any Session, and change platform users' roles (self-change
+refused; `ROLE_CHANGED` audited with actor attribution). First staff member
+comes from `scripts/promoteStaff.ts`; after that, staff promote staff over
+the API. Per-project tenant-admin gating is **deferred**, not declined:
+revisit when a consuming app states actual requirements. Contract version
+bumped to 0.5.0 across the server and both SDKs.
 
 ## Before starting the SDK — satisfied and shipped 2026-08-24
 
