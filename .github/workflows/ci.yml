@@ -48,6 +48,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # The backend test suite compiles and exercises both SDK packages'
+      # sources directly (tests/clientSdk.test.ts imports them), so their
+      # peer/dev deps — react for client-sdk's session-hook probe — must be
+      # installed or typecheck fails on unresolvable bare imports.
+      - name: Install client-sdk dependencies
+        working-directory: packages/client-sdk
+        run: bun install --frozen-lockfile
+
       - name: Generate Prisma client
         run: bun run prisma:generate
 
