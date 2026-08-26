@@ -1,3 +1,6 @@
 # Vendored dependencies for installed opencode skills — reproducible from
 # their own package manifests, not source.
 .opencode/node_modules/
+
+# Per-person agent decision profiles (see .profiles/kambe.md)
+.profiles/

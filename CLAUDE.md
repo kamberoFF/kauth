@@ -119,3 +119,12 @@ Default canonical labels (needs-triage, needs-info, ready-for-agent, ready-for-h
 ### Domain docs
 
 Single-context — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Decision profiles
+
+Per-person decision profiles live in the gitignored `.profiles/<os-username>.md`.
+Before making discretionary decisions autonomously (unattended or full-auto
+runs), read `.profiles/$USERNAME.md` if it exists and apply its precedence
+rules. The shared decision record (`CONTEXT.md`, `docs/adr/`) always
+outranks a personal profile; conflicts go to a human, never get resolved by
+the profile.
