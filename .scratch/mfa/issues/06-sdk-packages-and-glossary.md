@@ -7,7 +7,7 @@ SDK packages learn the two-phase flow and new project settings; the
 domain vocabulary lands in `CONTEXT.md`; the roadmap records the epic.
 
 **Blocked by:** 03, 05
-**Status:** ready-for-agent
+**Status:** done
 
 ## Behavior
 
@@ -57,12 +57,26 @@ domain vocabulary lands in `CONTEXT.md`; the roadmap records the epic.
 
 ## Acceptance criteria
 
-- [ ] Client-sdk two-phase flow demonstrated in README snippet matches
+- [x] Client-sdk two-phase flow demonstrated in README snippet matches
       actual server shapes (`mfaRequired`, `challengeToken`,
       `expiresInSeconds`, `deviceId`, `mfaGraceEndsAt` when present).
-- [ ] Backend-sdk PATCH types accept the new settings; clamp documented.
-- [ ] Both packages' contract-version lockstep tests stay green at 0.4.0.
-- [ ] `CONTEXT.md` carries the five entries, glossary-clean (no endpoint
+- [x] Backend-sdk PATCH types accept the new settings; clamp documented.
+- [x] Both packages' contract-version lockstep tests stay green at 0.4.0.
+- [x] `CONTEXT.md` carries the five entries, glossary-clean (no endpoint
       names, no column names beyond what the terms themselves need).
-- [ ] Roadmap §6 updated without disturbing the Done sections' history.
-- [ ] Backend typecheck, lint, full integration suite pass.
+- [x] Roadmap §6 updated without disturbing the Done sections' history.
+- [x] Backend typecheck, lint, full integration suite pass.
+
+## Comments
+
+Implemented 2026-08-26. Neither package had a README before this ticket, so
+the "README snippet" and "clamp note" landed as new package READMEs built
+around those snippets. The client SDK also gained six integration tests for
+the two-phase flow (TDD: red before `signIn`'s discriminated result and
+`finishSignIn` existed; the phase-one "signed-out and sessionless" test was
+mutation-checked by making the SDK wrongly transition to signed-in on the
+challenge branch — test went red, revert went green). `UpdateProjectSettingsInput`
+uses the PATCH route's snake_case wire keys; the "clamp" documents as
+reject-with-`validation`, matching `updateProjectSchema`. The roadmap's
+stale integration-test count (268 → 359) was refreshed alongside §6 per the
+living-document rule.

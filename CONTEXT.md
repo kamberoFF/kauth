@@ -54,3 +54,40 @@ can only ever be told what today's floor is; changing it requires the
 Project owner's authenticated session.
 _Avoid_: password rules, complexity requirements (not offered); "login
 password validation" (login does not enforce this).
+
+**Second factor**:
+The proof an enrolled User must supply at sign-in beyond the first factor
+(password or social login): a TOTP code or a Backup code. Opt-in per User;
+a Project can mandate it for every User via a Grace period.
+_Avoid_: 2FA; OTP (ambiguous).
+
+**Enrollment**:
+Binding a second factor to a User: a secret is generated, confirmed by a
+first valid code, and only then active. A pending (unconfirmed) enrollment
+challenges nothing at sign-in.
+_Avoid_: setup; device registration (collides with Device id).
+
+**Challenge**:
+The deliberate pause between proven credentials and session creation for an
+enrolled User, carried by a single-use, short-lived token bound to the
+Device id that started sign-in. Answered as a normal response rather than an
+error, so completing phase two — not the shape of phase one — is what
+creates the session.
+_Avoid_: step-up (the declined sensitive-action concept); MFA prompt.
+
+**Backup code**:
+A single-use offline stand-in for a TOTP code, shown exactly once at
+Enrollment and stored only as a hash. Distinct from kauth's email recovery
+tokens (password reset, email confirmation, OAuth exchange): those prove
+control of an email channel, while a Backup code is something you hold
+offline.
+_Avoid_: recovery code (collides with kauth's Recovery-token vocabulary);
+one-time password.
+
+**Grace period**:
+When a Project mandates a second factor, the window granted to each
+unenrolled User starting at their first post-policy sign-in, after which
+every request is refused until they enroll — except enrollment itself and
+sign-out, so self-service escape always exists. Sign-in is never blocked;
+the mandate walls usage, not entry.
+_Avoid_: trial, exemption.

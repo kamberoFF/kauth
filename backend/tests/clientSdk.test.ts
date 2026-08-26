@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { decodeBase32 } from "@oslojs/encoding";
+import { generateHOTP } from "@oslojs/otp";
 import {
   api,
   createOwnedProject,
@@ -8,10 +10,15 @@ import {
 } from "./helpers/api";
 import { prisma } from "../lib/prisma";
 import { UUID_REGEX } from "../constants/regex";
-import { createKauthClient } from "../../packages/client-sdk/src/index";
+import { TOTP_DIGITS, TOTP_PERIOD_SECONDS } from "../lib/totp";
+import {
+  createKauthClient,
+  type KauthClient,
+} from "../../packages/client-sdk/src/index";
 import { renderSessionHook } from "../../packages/client-sdk/dev/hookProbe";
 
 const DEVICE_ID = "4f2b3c5d-6e7f-4a90-8b1c-3d4e5f6a7b80";
+const RETURNING_DEVICE_ID = "5a3c4d6e-7f8a-4b01-9c2d-4e5f6a7b8c91";
 
 const END_USER = {
   email: "enduser@example.com",
@@ -53,7 +60,12 @@ async function bootstrap() {
       contractVersion: overrides?.contractVersion,
     });
 
-  return { owned, publishableKey, makeClient };
+  return {
+    owned,
+    publishableKey,
+    makeClient,
+    developerAccessToken: developer.accessToken,
+  };
 }
 
 beforeAll(async () => {
@@ -145,7 +157,7 @@ describe("client SDK (real HTTP against the test server)", () => {
       const registered = makeClient();
       await registered.signUp(END_USER);
 
-      const RETURNING_DEVICE = "5a3c4d6e-7f8a-4b01-9c2d-4e5f6a7b8c91";
+      const RETURNING_DEVICE = RETURNING_DEVICE_ID;
       const returning = makeClient({ deviceId: RETURNING_DEVICE });
       await returning.signIn({
         email: END_USER.email,
@@ -188,7 +200,7 @@ describe("client SDK (real HTTP against the test server)", () => {
       // A second device is how a returning user actually arrives: no signUp
       // in this client's history, only credentials and its own device id.
       const returning = makeClient({
-        deviceId: "5a3c4d6e-7f8a-4b01-9c2d-4e5f6a7b8c91",
+        deviceId: RETURNING_DEVICE_ID,
       });
       await returning.signIn({
         email: END_USER.email,
@@ -223,6 +235,227 @@ describe("client SDK (real HTTP against the test server)", () => {
 
       expect((error as { code?: string }).code).toBe("auth_failed");
       expect(attacker.getSnapshot().status).toBe("signedOut");
+    });
+  });
+
+  describe("two-phase sign-in (MFA)", () => {
+    function currentStep() {
+      return Math.floor(Date.now() / 1000 / TOTP_PERIOD_SECONDS);
+    }
+
+    function codeFor(secretBase32: string, step: number) {
+      return generateHOTP(decodeBase32(secretBase32), BigInt(step), TOTP_DIGITS);
+    }
+
+    /** A code strictly newer than the one enrollment consumed, so completing
+     * a challenge clears the replay guard no matter when this runs. */
+    function freshCode(secret: string, enrolledAtStep: number) {
+      return codeFor(secret, Math.max(currentStep(), enrolledAtStep + 1));
+    }
+
+    /** Signs the end user up through the SDK itself, then walks enrollment
+     * with the session the SDK is holding — the way a real app would do it. */
+    async function enrollUser(client: KauthClient) {
+      const { accessToken } = client.getSnapshot() as {
+        status: "signedIn";
+        accessToken: string;
+      };
+
+      const started = await api("POST", "/mfa/enrollment", { accessToken });
+      expect(started.status).toBe(200);
+
+      const secret = started.body.secret as string;
+      const enrolledAtStep = currentStep();
+      const verified = await api("POST", "/mfa/enrollment/verify", {
+        accessToken,
+        body: { code: codeFor(secret, enrolledAtStep) },
+      });
+      expect(verified.status).toBe(200);
+
+      return {
+        secret,
+        enrolledAtStep,
+        backupCodes: verified.body.backupCodes as string[],
+      };
+    }
+
+    /** One fresh project whose end user signed up through the SDK and
+     * finished TOTP enrollment with the session the SDK holds. */
+    async function enrolledScenario() {
+      const { owned, makeClient } = await bootstrap();
+      const client = makeClient();
+      await client.signUp(END_USER);
+      const enrolled = await enrollUser(client);
+
+      return { owned, makeClient, enrolled };
+    }
+
+    /** A returning device signing in up to the phase-one pause, with the
+     * discriminated result narrowed so tests read `challengeToken`. */
+    async function pausedSignIn(
+      makeClient: (overrides?: { deviceId?: string }) => KauthClient,
+    ) {
+      const returning = makeClient({
+        deviceId: RETURNING_DEVICE_ID,
+      });
+      const result = await returning.signIn({
+        email: END_USER.email,
+        password: END_USER.password,
+      });
+
+      if (!result.mfaRequired) {
+        throw new Error("expected an MFA challenge, got a session");
+      }
+
+      return { returning, challengeToken: result.challengeToken };
+    }
+
+    function expectKauthCode(error: unknown, code: string) {
+      expect((error as { code?: string }).code).toBe(code);
+      expect((error as Error).name).toBe("KauthError");
+    }
+
+    it("pauses an enrolled user's signIn at the challenge, signed-out and sessionless", async () => {
+      const { owned, makeClient } = await bootstrap();
+      const client = makeClient();
+      await client.signUp(END_USER);
+      await enrollUser(client);
+
+      const returning = makeClient({
+        deviceId: RETURNING_DEVICE_ID,
+      });
+      const result = await returning.signIn({
+        email: END_USER.email,
+        password: END_USER.password,
+      });
+
+      expect(result).toEqual({
+        mfaRequired: true,
+        challengeToken: expect.any(String),
+        expiresInSeconds: 300,
+      });
+
+      // Phase one must not look signed-in locally...
+      expect(returning.getSnapshot().status).toBe("signedOut");
+
+      // ...nor create anything server-side on the new device: only the
+      // registration's own session exists.
+      const sessions = await prisma.session.findMany({
+        where: { project_id: owned.id },
+      });
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]!.device_id).toBe(DEVICE_ID);
+    });
+
+    it("finishSignIn turns the challenge into working tokens", async () => {
+      const { owned, makeClient, enrolled } = await enrolledScenario();
+
+      const { returning, challengeToken } = await pausedSignIn(makeClient);
+      await returning.finishSignIn(
+        challengeToken,
+        freshCode(enrolled.secret, enrolled.enrolledAtStep),
+      );
+
+      const snapshot = returning.getSnapshot();
+      expect(snapshot.status).toBe("signedIn");
+
+      // The completed login is a real session, not a local fiction.
+      const { accessToken } = snapshot as {
+        status: "signedIn";
+        accessToken: string;
+      };
+      expect((await api("GET", "/protected", { accessToken })).status).toBe(200);
+
+      const session = await prisma.session.findFirstOrThrow({
+        where: {
+          project_id: owned.id,
+          device_id: RETURNING_DEVICE_ID,
+        },
+      });
+      expect(session.status).toBe("ACTIVE");
+    });
+
+    it("a wrong code surfaces mfa_code_invalid and leaves the sign-in recoverable", async () => {
+      const { makeClient, enrolled } = await enrolledScenario();
+
+      const { returning, challengeToken } = await pausedSignIn(makeClient);
+
+      let error: unknown;
+      try {
+        await returning.finishSignIn(challengeToken, "000000");
+      } catch (caught) {
+        error = caught;
+      }
+
+      expectKauthCode(error, "mfa_code_invalid");
+      expect(returning.getSnapshot().status).toBe("signedOut");
+
+      // A wrong code never burns the token: the right one still completes.
+      await returning.finishSignIn(
+        challengeToken,
+        freshCode(enrolled.secret, enrolled.enrolledAtStep),
+      );
+      expect(returning.getSnapshot().status).toBe("signedIn");
+    });
+
+    it("accepts a single-use backup code as the second factor", async () => {
+      const { makeClient, enrolled } = await enrolledScenario();
+
+      const { returning, challengeToken } = await pausedSignIn(makeClient);
+      await returning.finishSignIn(challengeToken, enrolled.backupCodes[0]!);
+
+      expect(returning.getSnapshot().status).toBe("signedIn");
+    });
+
+    it("answers an unknown challenge token with token_invalid and stays signed out", async () => {
+      const { makeClient } = await enrolledScenario();
+
+      const { returning } = await pausedSignIn(makeClient);
+
+      let error: unknown;
+      try {
+        await returning.finishSignIn("not-a-real-challenge-token", "123456");
+      } catch (caught) {
+        error = caught;
+      }
+
+      expectKauthCode(error, "token_invalid");
+      expect(returning.getSnapshot().status).toBe("signedOut");
+    });
+
+    it("surfaces the mandate's grace deadline to an unenrolled user's signIn", async () => {
+      const { owned, developerAccessToken, makeClient } = await bootstrap();
+
+      const patched = await api("PATCH", `/projects/${owned.id}`, {
+        accessToken: developerAccessToken,
+        body: { enforce_mfa: true },
+      });
+      expect(patched.status).toBe(200);
+
+      const client = makeClient();
+      await client.signUp(END_USER);
+
+      const returning = makeClient({
+        deviceId: RETURNING_DEVICE_ID,
+      });
+      const result = await returning.signIn({
+        email: END_USER.email,
+        password: END_USER.password,
+      });
+
+      // No enrollment, so no pause — but the mandate's window is visible.
+      if (result.mfaRequired) {
+        throw new Error("expected a straight sign-in, got an MFA challenge");
+      }
+
+      expect(result).toEqual({
+        mfaRequired: false,
+        mfaGraceEndsAt: expect.any(String),
+      });
+      expect(new Date(result.mfaGraceEndsAt!).getTime()).toBeGreaterThan(
+        Date.now(),
+      );
+      expect(returning.getSnapshot().status).toBe("signedIn");
     });
   });
 
@@ -324,7 +557,7 @@ describe("client SDK (real HTTP against the test server)", () => {
       await client.signUp(END_USER);
 
       const returning = makeClient({
-        deviceId: "5a3c4d6e-7f8a-4b01-9c2d-4e5f6a7b8c91",
+        deviceId: RETURNING_DEVICE_ID,
       });
       await returning.signIn({
         email: END_USER.email,

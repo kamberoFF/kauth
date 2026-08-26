@@ -3,7 +3,7 @@
 **Living document.** Unlike the dated audit and remediation logs, this file is
 kept current — if it disagrees with the code, the file is wrong.
 
-Last reviewed: 2026-08-24.
+Last reviewed: 2026-08-26.
 
 **Multi-tenancy pivot: foundation complete.** As of 2026-08-22 kauth has been
 extended into a self-hosted, multi-tenant auth platform — see
@@ -22,8 +22,10 @@ the dead `csrf_tokens` table is dropped; session policy
 password policy on 2026-08-24 (see "Password hashing" below). Multi-instance
 readiness landed the same day: the seven auth-sensitive rate limiters now
 count against a shared Redis store (ADR 0005), with per-instance memory as
-the logged degradation path. **Next up: features** — the foundation items
-are closed.
+the logged degradation path. MFA — TOTP second factors, backup codes,
+two-phase login, and an optional project mandate — shipped 2026-08-25/26
+(see "Features" below). **Next up:** what remains of the feature list —
+passkeys, RBAC enforcement, and asymmetric access-token signing.
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
 That plan was written in June 2026, before any of it was built; the parts that
@@ -62,9 +64,9 @@ Enough context to read the rest of this file.
   (`SESSION_INACTIVITY_DAYS`, default 14) rejects idle sessions.
 - **Audit log** — `security_events` written for every auth-relevant transition,
   with severity derived from the event type rather than the call site.
-- **Verification** — 268 integration tests against real Postgres covering abuse
-  cases (reuse, revoked-session access, throttling, device mismatch, CSRF), run
-  in CI alongside typecheck, lint, and `bun audit`.
+- **Verification** — 359 integration tests against real Postgres covering
+  abuse cases (reuse, revoked-session access, throttling, device mismatch,
+  CSRF, MFA challenges), run in CI alongside typecheck, lint, and `bun audit`.
 
 ## Next
 
@@ -131,12 +133,23 @@ cross-replica property test (two independent stores see each other's counts)
 and a degradation test (unreachable Redis still counts locally), plus a
 mutation check on the shared-visibility property.
 
-### 6. Features
+### 6. Features — MFA (TOTP) done 2026-08-26
 
-Deliberately last: none of them are worth building on a foundation that still
-has the items above open.
+Shipped as the `mfa` tickets: TOTP enrollment with AES-256-GCM-encrypted
+secrets under a dedicated `ENCRYPTION_KEY` (ADR 0006), two-phase login
+through a single-use, device-bound challenge token (social logins challenged
+uniformly), single-use backup codes shown exactly once, step-up'd disable,
+and password reset clearing enrollment as the lost-authenticator escape
+hatch. Alongside it: an optional per-Project mandate — `enforce_mfa` plus
+`mfa_grace_days` (owner-settable, clamped 3–90, default 7) — stamping each
+unenrolled user a grace window at credential verification and refusing
+walled requests everywhere except enrollment routes and logout. Contract
+version bumped to 0.4.0; both SDKs learned the two-phase flow.
 
-- MFA (TOTP) and passkeys.
+Deliberately ordered last: none of what remains was worth building before
+the foundation above closed. Still open:
+
+- Passkeys.
 - RBAC enforcement. `Role` exists on the user, appears in no token, and gates
   nothing.
 - Asymmetric access-token signing with `kid` and a key-rotation policy, if other

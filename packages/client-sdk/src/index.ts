@@ -48,6 +48,30 @@ export interface SignInInput {
 }
 
 /**
+ * What one sign-in attempt led to. Most users get a session outright; an
+ * enrolled user pauses at a second-factor challenge instead — complete it by
+ * passing `challengeToken` and their code to `finishSignIn`.
+ */
+export type SignInResult =
+  | {
+      /** Credentials alone were enough: a session exists and the store is signed in. */
+      mfaRequired: false;
+      /**
+       * When the project mandates MFA, the deadline this unenrolled user was
+       * granted to enroll; once past it, requests fail until they enroll.
+       */
+      mfaGraceEndsAt?: string;
+    }
+  | {
+      /** Credentials checked out but a second factor is required. */
+      mfaRequired: true;
+      /** Single-use, short-lived, bound to this client's device id. */
+      challengeToken: string;
+      /** Seconds until the challenge token expires. */
+      expiresInSeconds: number;
+    };
+
+/**
  * The tokens live in the SDK's memory and are handed to the host app, which
  * decides how (and whether) to persist them — the platform deliberately never
  * pushes a browser into holding tokens it didn't ask for.
@@ -80,8 +104,20 @@ export interface KauthClient {
    * Signs an existing end user in. The platform's login endpoint returns
    * tokens without a profile, so the session's `user` is null here; call
    * `signUp`-time data or your own profile endpoint if you need it.
+   *
+   * A user enrolled in MFA does not get a session from this call: it returns
+   * `{ mfaRequired: true, challengeToken }` and the store stays signed out —
+   * collect their code and finish via `finishSignIn`.
    */
-  signIn(input: SignInInput): Promise<void>;
+  signIn(input: SignInInput): Promise<SignInResult>;
+
+  /**
+   * Completes a sign-in that paused at an MFA challenge. Resolves once the
+   * session exists and the store is signed in; throws the platform's
+   * `token_invalid` (bad/expired/replayed challenge) or `mfa_code_invalid`
+   * (wrong code — the challenge stays usable until it expires).
+   */
+  finishSignIn(challengeToken: string, code: string): Promise<void>;
 
   /**
    * Revokes the current session server-side and clears local state. Resolves
@@ -184,6 +220,45 @@ export function createKauthClient({
     async signIn(input) {
       const body = await request("POST", "/login", input);
       captureDeviceId(body);
+
+      // An enrolled user's sign-in pauses here: no session exists yet, so the
+      // store stays signed out and only `finishSignIn` may transition it.
+      if (body.mfaRequired === true) {
+        return {
+          mfaRequired: true,
+          challengeToken: body.challengeToken as string,
+          expiresInSeconds: body.expiresInSeconds as number,
+        };
+      }
+
+      const { accessToken, refreshToken } = body as {
+        accessToken: string;
+        refreshToken: string;
+      };
+
+      setState({
+        status: "signedIn",
+        user: null,
+        accessToken,
+        refreshToken,
+      });
+
+      const result: SignInResult = { mfaRequired: false };
+
+      if (typeof body.mfaGraceEndsAt === "string") {
+        result.mfaGraceEndsAt = body.mfaGraceEndsAt;
+      }
+
+      return result;
+    },
+
+    async finishSignIn(challengeToken, code) {
+      const body = await request("POST", "/mfa/challenge", {
+        challengeToken,
+        code,
+      });
+      captureDeviceId(body);
+
       const { accessToken, refreshToken } = body as {
         accessToken: string;
         refreshToken: string;

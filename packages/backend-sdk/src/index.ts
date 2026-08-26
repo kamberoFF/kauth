@@ -43,6 +43,33 @@ interface RawSession {
   revokedAt: string | null;
 }
 
+/**
+ * The body `PATCH /projects/:projectId` accepts, typed for integrations that
+ * drive project settings through an owner's session (the route is
+ * session-authenticated and deliberately never reachable by this package's
+ * secret key). Keys are the wire format the platform validates — snake_case,
+ * like every settings payload. Partial-update semantics: an absent field is
+ * left untouched, and an explicit `null` clears back to the deployment
+ * default.
+ */
+export interface UpdateProjectSettingsInput {
+  /** Password floor (8–128); null falls back to `PASSWORD_MIN_LENGTH`. */
+  min_password_length?: number | null;
+  /**
+   * Whether every User must enroll a second factor. Turning this on grants
+   * each unenrolled user a grace window immediately.
+   */
+  enforce_mfa?: boolean;
+  /**
+   * Length of that grace window in days. Accepted only inside the 3–90
+   * range — out-of-range values are rejected with `validation`, not silently
+   * adjusted, because a quietly shortened or lengthened lockout window is a
+   * policy decision an owner should have to state correctly. Null means the
+   * deployment default of 7 days.
+   */
+  mfa_grace_days?: number | null;
+}
+
 export interface KauthBackend {
   /**
    * Confirms a session is live *right now* — every call is a network call
