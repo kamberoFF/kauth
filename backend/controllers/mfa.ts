@@ -1,12 +1,18 @@
 import { type RequestHandler } from "express";
 import { prisma } from "../lib/prisma";
-import { mfaCodeSchema, mfaChallengeSchema } from "../lib/validation";
+import {
+  mfaCodeSchema,
+  mfaChallengeSchema,
+  mfaDisableSchema,
+} from "../lib/validation";
 import { appError } from "../utils/errors";
 import { requireDeviceId, requireProjectId, requireUserId } from "../utils/requestGuards";
 import { buildOtpauthUri, generateTotpSecret, matchTotpStep } from "../lib/totp";
 import { decrypt, encrypt } from "../lib/cryptoBox";
 import { generateBackupCodes, hashBackupCode } from "../lib/backupCodes";
 import { peekRecoveryToken } from "../lib/recoveryTokens";
+import { CREDENTIAL_PROVIDER } from "../constants/providers";
+import { verifyPassword } from "../lib/passwords";
 import {
   clientContext,
   createSession,
@@ -182,6 +188,130 @@ export const getMfaStatus: RequestHandler = async (req, res, next) => {
         backupCodesRemaining: user._count.backupCodes,
       }),
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * The only step-up'd route in the codebase: turning the second factor off
+ * demands both proofs — the password and a live code — so a stolen access
+ * token alone cannot strip the protection, and neither proof alone can
+ * either. Both are verified before any mutation; the wipe itself is one
+ * transaction.
+ */
+export const disableMfa: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = mfaDisableSchema.safeParse(req.body);
+    if (!parsed.success)
+      return next(appError(400, "Invalid input", "validation"));
+
+    const userId = requireUserId(req);
+    const projectId = requireProjectId(req);
+    const context = requestContext(req);
+
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: {
+        mfa_enrolled_at: true,
+        totp_secret: true,
+        last_totp_step: true,
+        accounts: {
+          where: { provider_id: CREDENTIAL_PROVIDER },
+          take: 1,
+          select: { password: true },
+        },
+      },
+    });
+
+    if (!user.mfa_enrolled_at) {
+      return next(appError(409, "MFA is not enabled", "mfa_not_enrolled"));
+    }
+
+    // Proof one. One comparison runs whatever the stored credential state is,
+    // so an account without a credential provider pays the dummy-hash cost
+    // rather than answering measurably faster than a wrong password.
+    const [credential] = user.accounts;
+    const passwordMatches = await verifyPassword(
+      parsed.data.password,
+      credential?.password,
+    );
+
+    if (!passwordMatches) {
+      return next(appError(401, "Invalid credentials", "auth_failed"));
+    }
+
+    // Proof two: a current TOTP or an unused backup code, checked exactly as
+    // sign-in would — including the replay guard against last_totp_step.
+    const matchedStep = user.totp_secret
+      ? matchTotpStep(decrypt(user.totp_secret), parsed.data.code)
+      : null;
+
+    // Existence, not identity: unlike the challenge flow there is no row to
+    // burn by id — success deletes every code along with the enrollment.
+    let hasUnusedBackupCode = false;
+
+    if (matchedStep === null) {
+      const backup = await prisma.mfaBackupCode.findFirst({
+        where: {
+          user_id: userId,
+          code_hash: hashBackupCode(parsed.data.code),
+          used_at: null,
+        },
+        select: { id: true },
+      });
+
+      hasUnusedBackupCode = backup !== null;
+    }
+
+    // Fast path of the replay guard: anything at or below the last used step
+    // is dead on arrival, even while still inside its window.
+    if (
+      matchedStep !== null &&
+      user.last_totp_step !== null &&
+      matchedStep <= user.last_totp_step
+    ) {
+      return next(appError(401, "Invalid code", "mfa_code_invalid"));
+    }
+
+    if (matchedStep === null && !hasUnusedBackupCode) {
+      return next(appError(401, "Invalid code", "mfa_code_invalid"));
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Claim conditions on still being enrolled: a password reset landing
+      // first must win, and this disable then has nothing left to wipe.
+      const wiped = await tx.user.updateMany({
+        where: { id: userId, mfa_enrolled_at: { not: null } },
+        data: {
+          totp_secret: null,
+          mfa_enrolled_at: null,
+          last_totp_step: null,
+          mfa_grace_ends_at: null,
+        },
+      });
+
+      if (wiped.count === 0) {
+        throw appError(409, "MFA is not enabled", "mfa_not_enrolled");
+      }
+
+      await tx.mfaBackupCode.deleteMany({ where: { user_id: userId } });
+
+      // Sessions deliberately stay alive: no credential changed, so there is
+      // nothing to recover from — unlike a reset, this proves identity.
+      await recordSecurityEvent(
+        {
+          type: "MFA_DISABLED",
+          userId,
+          projectId,
+          ...context,
+          metadata: { reason: "user_initiated" },
+        },
+        tx,
+      );
+    });
+
+    res.json({});
   } catch (error) {
     next(error);
   }

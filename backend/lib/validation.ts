@@ -84,3 +84,14 @@ export const issueApiKeySchema = z.object({
 export const mfaCodeSchema = z.object({
   code: z.string().min(1).max(20),
 });
+
+/**
+ * Step-up disable. Same shape-only rule as mfaCodeSchema, and deliberately no
+ * length floor on the password: legacy credentials shorter than today's
+ * policy must still be able to prove ownership (same reasoning as
+ * loginSchema).
+ */
+export const mfaDisableSchema = z.object({
+  password: z.string().min(1).max(200),
+  code: z.string().min(1).max(20),
+});

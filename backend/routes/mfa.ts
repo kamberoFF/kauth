@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  disableMfa,
   getMfaStatus,
   startMfaEnrollment,
   verifyMfaChallenge,
@@ -27,5 +28,8 @@ router.post(
   verifyMfaEnrollment,
 );
 router.get("/mfa", requireAuth, getMfaStatus);
+// Step-up disable: same limiter placement as the verify route — only
+// authenticated code submissions spend the shared IP budget.
+router.delete("/mfa", requireAuth, tokenSubmissionLimiter, disableMfa);
 
 export default router;

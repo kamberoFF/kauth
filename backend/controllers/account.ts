@@ -210,6 +210,37 @@ export const resetPassword: RequestHandler = async (req, res, next) => {
         data: { email_verified: true },
       });
 
+      // Lost-authenticator escape hatch (MFA spec): a completed reset clears
+      // second-factor enrollment. Email compromise already equals total
+      // takeover via reset — the channel that proved the mailbox could have
+      // set any password it wanted — so this grants it nothing it lacked.
+      const clearedMfa = await tx.user.updateMany({
+        where: { id: record.user_id, mfa_enrolled_at: { not: null } },
+        data: {
+          totp_secret: null,
+          mfa_enrolled_at: null,
+          last_totp_step: null,
+          mfa_grace_ends_at: null,
+        },
+      });
+
+      if (clearedMfa.count > 0) {
+        await tx.mfaBackupCode.deleteMany({
+          where: { user_id: record.user_id },
+        });
+
+        await recordSecurityEvent(
+          {
+            type: "MFA_DISABLED",
+            userId: record.user_id,
+            projectId: record.project_id,
+            ...context,
+            metadata: { reason: "password_reset" },
+          },
+          tx,
+        );
+      }
+
       await recordSecurityEvent(
         {
           type: "PASSWORD_RESET_COMPLETED",
