@@ -58,7 +58,13 @@ function createRequireAuth({ enforceMfaWall }: { enforceMfaWall: boolean }) {
           status: true,
           expires_at: true,
           last_used_at: true,
-          user: { select: { mfa_enrolled_at: true, mfa_grace_ends_at: true } },
+          user: {
+            select: {
+              mfa_enrolled_at: true,
+              mfa_grace_ends_at: true,
+              role: true,
+            },
+          },
           project: { select: { enforce_mfa: true } },
         },
       });
@@ -116,6 +122,7 @@ function createRequireAuth({ enforceMfaWall }: { enforceMfaWall: boolean }) {
       req.userId = session.user_id;
       req.sessionId = session.id;
       req.projectId = session.project_id;
+      req.userRole = session.user.role;
 
       next();
     } catch (error) {

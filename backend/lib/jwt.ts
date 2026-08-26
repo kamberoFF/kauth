@@ -18,6 +18,7 @@ export const generateTokens = ({
   familyId,
   sessionId,
   projectId,
+  role,
 }: GenerateTokensParams): {
   familyId: string;
   accessToken: AccessToken;
@@ -26,7 +27,7 @@ export const generateTokens = ({
   const jwtid = crypto.randomUUID();
 
   const accessToken = jwt.sign(
-    { userId, familyId, sid: sessionId, projectId },
+    { userId, familyId, sid: sessionId, projectId, role },
     JWT_SECRET,
     {
       algorithm: JWT_ALGORITHM,
@@ -67,6 +68,9 @@ export const parseRefreshToken = (token: string): RefreshToken | null => {
  *
  * A payload without `sid` predates session-bound access tokens and is refused:
  * it cannot be checked against a session, which is the whole point of the claim.
+ *
+ * Same for `role` (ADR 0007): every mint site supplies it, so its absence
+ * marks a forged or pre-RBAC token rather than an older-but-legitimate one.
  */
 export const verifyAccessToken = (token: string): AccessTokenPayload | null => {
   try {
@@ -79,7 +83,8 @@ export const verifyAccessToken = (token: string): AccessTokenPayload | null => {
       !payload.userId ||
       !payload.familyId ||
       !payload.jti ||
-      !payload.projectId
+      !payload.projectId ||
+      (payload.role !== "USER" && payload.role !== "ADMIN")
     ) {
       return null;
     }

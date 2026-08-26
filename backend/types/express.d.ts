@@ -9,6 +9,7 @@ declare global {
       sessionId?: string;
       deviceId?: string;
       projectId?: string;
+      userRole?: "USER" | "ADMIN";
       csrfToken?: string;
       apiKeyId?: string;
       apiKeyType?: "PUBLISHABLE" | "SECRET";

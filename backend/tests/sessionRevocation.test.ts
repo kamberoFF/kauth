@@ -120,6 +120,7 @@ describe("access tokens are bound to their session", () => {
       familyId: crypto.randomUUID(),
       sessionId,
       projectId: project.id,
+      role: "USER",
     });
 
     const response = await callProtected(accessToken.token);

@@ -96,7 +96,7 @@ export const register: RequestHandler = async (req, res, next) => {
         },
       });
 
-      const created = await createSession(tx, user.id, projectId, context);
+      const created = await createSession(tx, user.id, projectId, context, user.role);
 
       await recordSecurityEvent(
         {
@@ -246,7 +246,7 @@ export const login: RequestHandler = async (req, res, next) => {
         "replaced_by_new_login",
       );
 
-      const created = await createSession(tx, user.id, projectId, context);
+      const created = await createSession(tx, user.id, projectId, context, user.role);
 
       await recordSecurityEvent(
         {
@@ -306,7 +306,9 @@ export const refresh: RequestHandler = async (req, res, next) => {
 
     const storedToken = await prisma.refreshToken.findUnique({
       where: { selector: presented.selector },
-      include: { session: true },
+      include: {
+        session: { include: { user: { select: { role: true } } } },
+      },
     });
 
     if (!storedToken) {
@@ -442,6 +444,9 @@ export const refresh: RequestHandler = async (req, res, next) => {
       familyId: storedToken.family_id,
       sessionId: storedToken.session_id,
       projectId: context.projectId,
+      // Re-read at every rotation, so a role change reaches new tokens on the
+      // next refresh even though authorization never waited for that.
+      role: storedToken.session.user.role,
     });
 
     // Sliding expiry: activity pushes the session's whole horizon out to a

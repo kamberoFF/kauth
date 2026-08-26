@@ -357,6 +357,7 @@ export const verifyMfaChallenge: RequestHandler = async (req, res, next) => {
       where: { id: record.user_id },
       select: {
         id: true,
+        role: true,
         mfa_enrolled_at: true,
         totp_secret: true,
         last_totp_step: true,
@@ -457,6 +458,7 @@ export const verifyMfaChallenge: RequestHandler = async (req, res, next) => {
           record.user_id,
           record.project_id,
           context,
+          user.role,
         );
 
         if (backupCodeId !== null) {

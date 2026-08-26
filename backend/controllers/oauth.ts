@@ -362,7 +362,7 @@ export const exchangeOAuthCode: RequestHandler = async (req, res, next) => {
     // proven at this point; what is still missing is the second factor.
     const user = await prisma.user.findUnique({
       where: { id: record.user_id },
-      select: { mfa_enrolled_at: true },
+      select: { role: true, mfa_enrolled_at: true },
     });
 
     if (user?.mfa_enrolled_at) {
@@ -393,6 +393,10 @@ export const exchangeOAuthCode: RequestHandler = async (req, res, next) => {
         record.user_id,
         record.project_id,
         context,
+        // Unreachable as USER: the exchange record names an existing row, so
+        // user is only null mid-deletion — where session.create's FK fails
+        // before anything is minted into a response.
+        user?.role ?? "USER",
       );
 
       await recordSecurityEvent(

@@ -10,6 +10,7 @@ import oauthRoutes from "./routes/oauth";
 import sessionsRoutes from "./routes/sessions";
 import projectsRoutes from "./routes/projects";
 import projectAccessRoutes from "./routes/projectAccess";
+import adminRoutes from "./routes/admin";
 import { requireAuth } from "./middlewares/auth";
 import { errorHandler, notFoundHandler } from "./middlewares/error";
 import { globalLimiter } from "./middlewares/rateLimit";
@@ -110,6 +111,7 @@ app.use(oauthRoutes);
 app.use(sessionsRoutes);
 app.use(projectsRoutes);
 app.use(projectAccessRoutes);
+app.use(adminRoutes);
 
 app.get("/protected", requireAuth, (req, res) => {
   res.json({ message: "Authorized", userId: req.userId });

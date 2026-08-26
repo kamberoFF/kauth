@@ -64,13 +64,15 @@ export function isInactive(session: { last_used_at: Date | null }, now: Date) {
 /**
  * Creates a fresh session plus the first refresh token of a new family.
  * Shared by registration, credential login, and the OAuth callback so all three
- * produce identical session state.
+ * produce identical session state. The caller supplies the user's current
+ * role because every call site already holds the row (ADR 0007).
  */
 export async function createSession(
   tx: DbClient,
   userId: string,
   projectId: string,
   context: ClientContext,
+  role: "USER" | "ADMIN",
 ) {
   const familyId = crypto.randomUUID();
   // The id is allocated up front because the access token has to carry it, and
@@ -81,6 +83,7 @@ export async function createSession(
     familyId,
     sessionId,
     projectId,
+    role,
   });
   const now = new Date();
   const expiresAt = sessionExpiry();

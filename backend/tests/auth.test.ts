@@ -577,6 +577,7 @@ describe("multi-tenant isolation", () => {
       familyId: crypto.randomUUID(),
       sessionId: session.id,
       projectId: otherProject.id,
+      role: "USER",
     });
 
     const response = await api("GET", "/protected", {
