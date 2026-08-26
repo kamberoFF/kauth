@@ -7,7 +7,7 @@ per-user grace window — enforced by walling usage in `requireAuth`, never
 by blocking sign-in.
 
 **Blocked by:** 02
-**Status:** ready-for-agent
+**Status:** done
 
 ## Behavior
 
@@ -46,21 +46,28 @@ by blocking sign-in.
 
 ## Acceptance criteria
 
-- [ ] Owner sets/clears `enforce_mfa` and `mfa_grace_days`; out-of-clamp
+- [x] Owner sets/clears `enforce_mfa` and `mfa_grace_days`; out-of-clamp
       values rejected; `PROJECT_MFA_POLICY_CHANGED` recorded each change.
-- [ ] Activation backfills stamps for active unenrolled users only;
+- [x] Activation backfills stamps for active unenrolled users only;
       enrolled users untouched; users enrolling during grace clear theirs.
-- [ ] Fresh sign-in under mandate stamps grace and surfaces
+- [x] Fresh sign-in under mandate stamps grace and surfaces
       `mfaGraceEndsAt` in the response; second sign-in doesn't shorten it.
-- [ ] Past-deadline session: every non-exempt route → `403
+- [x] Past-deadline session: every non-exempt route → `403
       mfa_enrollment_required`, while `/mfa/*` and logout still work —
       enrollment-under-wall succeeds end-to-end (**mutation check**:
       remove the exemptions and confirm this test deadlocks/red).
-- [ ] Within grace: everything works as before.
-- [ ] Disable-MFA-under-mandate coherence: immediate wall on the wiped
+- [x] Within grace: everything works as before.
+- [x] Disable-MFA-under-mandate coherence: immediate wall on the wiped
       session's next request.
-- [ ] `requireAuth` still issues exactly one query (nested selects, not a
+- [x] `requireAuth` still issues exactly one query (nested selects, not a
       second round-trip).
-- [ ] Mandate off restores pre-mandate behavior for previously stamped
+- [x] Mandate off restores pre-mandate behavior for previously stamped
       users without data cleanup.
-- [ ] typecheck, lint, full integration suite pass.
+- [x] typecheck, lint, full integration suite pass.
+
+## Comments
+
+Mutation checks run 2026-08-26: swapping the exempt middleware back to
+`requireAuth` failed exactly the two self-service tests (in-wall status +
+end-to-end enroll-out); injecting a duplicate session query failed exactly
+the one-query test. Both reverted.

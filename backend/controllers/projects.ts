@@ -8,6 +8,10 @@ import { appError } from "../utils/errors";
 import { requireProjectId, requireUserId } from "../utils/requestGuards";
 import { isPlatformProject } from "../lib/platformProject";
 import {
+  backfillMfaGrace,
+  resolveMfaGraceDays,
+} from "../lib/mfaPolicy";
+import {
   recordSecurityEvent,
   requestContext,
 } from "../lib/securityEvents";
@@ -17,6 +21,8 @@ function serializeProject(project: {
   name: string;
   owner_id: string | null;
   min_password_length: number | null;
+  enforce_mfa: boolean;
+  mfa_grace_days: number | null;
   created_at: Date;
 }) {
   return {
@@ -24,6 +30,8 @@ function serializeProject(project: {
     name: project.name,
     ownerId: project.owner_id,
     minPasswordLength: project.min_password_length,
+    enforceMfa: project.enforce_mfa,
+    mfaGraceDays: project.mfa_grace_days,
     createdAt: project.created_at,
   };
 }
@@ -70,10 +78,10 @@ export const createProject: RequestHandler = async (req, res, next) => {
 };
 
 /**
- * Owner-only settings update. Deliberately narrow — only the password policy
- * field is mutable until a second setting earns its way in (trusted_origins
- * wiring will likely be next). Reached through requireProjectOwnership, so
- * req.projectId is already validated as an owned UUID.
+ * Owner-only settings update. Partial-update semantics — an absent field is
+ * left untouched, so setting the MFA mandate never has to re-state the
+ * password floor. Reached through requireProjectOwnership, so req.projectId
+ * is already validated as an owned UUID.
  */
 export const updateProject: RequestHandler = async (req, res, next) => {
   try {
@@ -84,25 +92,77 @@ export const updateProject: RequestHandler = async (req, res, next) => {
     const projectId = requireProjectId(req);
     const context = requestContext(req);
 
-    // One transaction, so the audit row and the policy change commit or roll
-    // back together. Lowering a Project's floor is an auth-relevant
-    // transition — it weakens every credential set afterwards.
+    // One transaction, so the audit rows, the policy change, and any grace
+    // backfill commit or roll back together. Both policy events are recorded
+    // only when a value actually flips: re-submitting the current settings is
+    // not an auth-relevant transition, and noise-free audit beats noisy audit.
     const project = await prisma.$transaction(async (tx) => {
-      const updated = await tx.project.update({
+      const current = await tx.project.findUniqueOrThrow({
         where: { id: projectId },
-        data: { min_password_length: parsed.data.min_password_length },
       });
 
-      await recordSecurityEvent(
-        {
-          type: "PROJECT_PASSWORD_POLICY_CHANGED",
+      // Absent means "leave as is"; explicit null clears back to defaults.
+      const minPasswordLength =
+        parsed.data.min_password_length !== undefined
+          ? parsed.data.min_password_length
+          : current.min_password_length;
+      const enforceMfa = parsed.data.enforce_mfa ?? current.enforce_mfa;
+      const mfaGraceDays = parsed.data.mfa_grace_days !== undefined
+        ? parsed.data.mfa_grace_days
+        : current.mfa_grace_days;
+
+      if (enforceMfa && !current.enforce_mfa) {
+        // Activation backfills windows once, in this transaction, so nobody
+        // already using the product is walled the moment the mandate lands.
+        await backfillMfaGrace(
+          tx,
           projectId,
-          userId: requireUserId(req),
-          ...context,
-          metadata: { min_password_length: parsed.data.min_password_length },
+          resolveMfaGraceDays({ mfa_grace_days: mfaGraceDays }),
+        );
+      }
+
+      const updated = await tx.project.update({
+        where: { id: projectId },
+        data: {
+          min_password_length: minPasswordLength,
+          enforce_mfa: enforceMfa,
+          mfa_grace_days: mfaGraceDays,
         },
-        tx,
-      );
+      });
+
+      if (
+        parsed.data.min_password_length !== undefined &&
+        parsed.data.min_password_length !== current.min_password_length
+      ) {
+        await recordSecurityEvent(
+          {
+            type: "PROJECT_PASSWORD_POLICY_CHANGED",
+            projectId,
+            userId: requireUserId(req),
+            ...context,
+            metadata: { min_password_length: parsed.data.min_password_length },
+          },
+          tx,
+        );
+      }
+
+      if (
+        (parsed.data.enforce_mfa !== undefined &&
+          parsed.data.enforce_mfa !== current.enforce_mfa) ||
+        (parsed.data.mfa_grace_days !== undefined &&
+          parsed.data.mfa_grace_days !== current.mfa_grace_days)
+      ) {
+        await recordSecurityEvent(
+          {
+            type: "PROJECT_MFA_POLICY_CHANGED",
+            projectId,
+            userId: requireUserId(req),
+            ...context,
+            metadata: { enforce_mfa: enforceMfa, mfa_grace_days: mfaGraceDays },
+          },
+          tx,
+        );
+      }
 
       return updated;
     });

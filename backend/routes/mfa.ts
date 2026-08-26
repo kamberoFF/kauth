@@ -6,7 +6,7 @@ import {
   verifyMfaChallenge,
   verifyMfaEnrollment,
 } from "../controllers/mfa";
-import { requireAuth } from "../middlewares/auth";
+import { requireAuthMfaExempt } from "../middlewares/auth";
 import { resolveDevice } from "../middlewares/device";
 import { tokenSubmissionLimiter } from "../middlewares/rateLimit";
 
@@ -18,18 +18,18 @@ const router = Router();
 // device binding.
 router.post("/mfa/challenge", resolveDevice, tokenSubmissionLimiter, verifyMfaChallenge);
 
-router.post("/mfa/enrollment", requireAuth, startMfaEnrollment);
-// The limiter sits behind requireAuth so only authenticated code submissions
-// spend the shared IP budget; unauthenticated noise dies at the cheaper check.
+// Every authenticated route here uses requireAuthMfaExempt: under an MFA
+// mandate these are the self-service escape hatches, so a walled user can
+// always reach enrollment, status, and disable. The limiter still sits behind
+// auth so only authenticated code submissions spend the shared IP budget.
+router.post("/mfa/enrollment", requireAuthMfaExempt, startMfaEnrollment);
 router.post(
   "/mfa/enrollment/verify",
-  requireAuth,
+  requireAuthMfaExempt,
   tokenSubmissionLimiter,
   verifyMfaEnrollment,
 );
-router.get("/mfa", requireAuth, getMfaStatus);
-// Step-up disable: same limiter placement as the verify route — only
-// authenticated code submissions spend the shared IP budget.
-router.delete("/mfa", requireAuth, tokenSubmissionLimiter, disableMfa);
+router.get("/mfa", requireAuthMfaExempt, getMfaStatus);
+router.delete("/mfa", requireAuthMfaExempt, tokenSubmissionLimiter, disableMfa);
 
 export default router;

@@ -24,6 +24,7 @@ import {
   tryRecordSecurityEvent,
 } from "../lib/securityEvents";
 import { oauthExchangeSchema } from "../lib/validation";
+import { stampMfaGrace } from "../lib/mfaPolicy";
 import { sendAuthResponse } from "../lib/tokenTransport";
 import { logger } from "../lib/logger";
 
@@ -407,7 +408,13 @@ export const exchangeOAuthCode: RequestHandler = async (req, res, next) => {
         tx,
       );
 
-      return created;
+      const mfaGraceEndsAt = await stampMfaGrace(
+        tx,
+        { id: record.user_id, mfa_enrolled_at: user?.mfa_enrolled_at ?? null },
+        record.project_id,
+      );
+
+      return { ...created, mfaGraceEndsAt };
     });
 
     sendAuthResponse(
@@ -417,7 +424,11 @@ export const exchangeOAuthCode: RequestHandler = async (req, res, next) => {
         accessToken: result.accessToken.token,
         refreshToken: result.refreshToken.token,
       },
-      {},
+      {
+        ...(result.mfaGraceEndsAt && {
+          mfaGraceEndsAt: result.mfaGraceEndsAt.toISOString(),
+        }),
+      },
       200,
       context.deviceId,
     );

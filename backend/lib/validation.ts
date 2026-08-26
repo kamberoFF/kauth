@@ -68,8 +68,17 @@ export const createProjectSchema = z.object({
   min_password_length: z.number().int().min(8).max(128).optional(),
 });
 
+/**
+ * Partial-update semantics: an absent field means "leave as is", an explicit
+ * null clears it back to the deployment default. mfa_grace_days rejects
+ * out-of-clamp values rather than clamping them — a silently shortened or
+ * lengthened lockout window is a policy decision an owner should have to
+ * state correctly.
+ */
 export const updateProjectSchema = z.object({
-  min_password_length: z.number().int().min(8).max(128).nullable(),
+  min_password_length: z.number().int().min(8).max(128).nullable().optional(),
+  enforce_mfa: z.boolean().optional(),
+  mfa_grace_days: z.number().int().min(3).max(90).nullable().optional(),
 });
 
 export const issueApiKeySchema = z.object({

@@ -25,72 +25,112 @@ function presentedToken(req: Request) {
  * valid for its full 15 minutes, including after logout, a password change, or
  * reuse detection. The session row is the authority on whether it still counts,
  * so every authenticated request pays one primary-key read for real revocation.
+ *
+ * The MFA mandate rides the same single query as nested selects on purpose:
+ * `user` and `project` are relations of the session row, so Prisma joins them
+ * into that one round-trip instead of issuing follow-ups on the hot path.
+ *
+ * The wall blocks usage, never sign-in, and never self-service: routes under
+ * /mfa and logout take requireAuthMfaExempt so a walled user can always enroll
+ * (or leave) rather than being locked out with no way back in.
  */
-export const requireAuth: RequestHandler = async (req, _res, next) => {
-  try {
-    const token = presentedToken(req);
+function createRequireAuth({ enforceMfaWall }: { enforceMfaWall: boolean }) {
+  const requireAuthImpl: RequestHandler = async (req, _res, next) => {
+    try {
+      const token = presentedToken(req);
 
-    if (!token) {
-      return next(appError(401, "No token provided", "token_missing"));
+      if (!token) {
+        return next(appError(401, "No token provided", "token_missing"));
+      }
+
+      const payload = verifyAccessToken(token);
+
+      if (!payload) {
+        return next(appError(401, "Invalid or expired token", "token_invalid"));
+      }
+
+      const session = await prisma.session.findUnique({
+        where: { id: payload.sid },
+        select: {
+          id: true,
+          user_id: true,
+          project_id: true,
+          status: true,
+          expires_at: true,
+          last_used_at: true,
+          user: { select: { mfa_enrolled_at: true, mfa_grace_ends_at: true } },
+          project: { select: { enforce_mfa: true } },
+        },
+      });
+
+      if (!session) {
+        return next(appError(401, "Invalid or expired token", "token_invalid"));
+      }
+
+      // A validly signed token whose subject disagrees with its session is not an
+      // ordinary expiry; it means a token was minted against someone else's row.
+      if (session.user_id !== payload.userId) {
+        return next(appError(401, "Invalid or expired token", "token_invalid"));
+      }
+
+      // Same failure class as the user-id check above: a token minted for one
+      // project must never be honored against another project's session.
+      if (session.project_id !== payload.projectId) {
+        return next(appError(401, "Invalid or expired token", "token_invalid"));
+      }
+
+      if (session.status !== "ACTIVE") {
+        return next(appError(401, "Session is no longer active", "session_revoked"));
+      }
+
+      if (session.expires_at <= new Date()) {
+        return next(appError(401, "Session has expired", "session_expired"));
+      }
+
+      // Read-only on purpose: marking the row EXPIRED here would put a write on
+      // every authenticated request. An idle session stops refreshing, so its
+      // expiry freezes and the cleanup job reclaims it after retention.
+      if (isInactive(session, new Date())) {
+        return next(appError(401, "Session has expired", "session_expired"));
+      }
+
+      if (
+        enforceMfaWall &&
+        session.project.enforce_mfa &&
+        !session.user.mfa_enrolled_at &&
+        (!session.user.mfa_grace_ends_at ||
+          session.user.mfa_grace_ends_at <= new Date())
+      ) {
+        // A missing stamp walls too: entry points stamp at credential
+        // verification, so unenrolled-without-stamp means the enrollment was
+        // wiped while the mandate stayed on — no fresh window is owed.
+        return next(
+          appError(
+            403,
+            "MFA enrollment required",
+            "mfa_enrollment_required",
+          ),
+        );
+      }
+
+      req.userId = session.user_id;
+      req.sessionId = session.id;
+      req.projectId = session.project_id;
+
+      next();
+    } catch (error) {
+      // Express 4 does not forward a rejected promise from a middleware, so an
+      // unhandled failure here would hang the request instead of returning 500.
+      next(error);
     }
+  };
 
-    const payload = verifyAccessToken(token);
+  return requireAuthImpl;
+}
 
-    if (!payload) {
-      return next(appError(401, "Invalid or expired token", "token_invalid"));
-    }
+export const requireAuth = createRequireAuth({ enforceMfaWall: true });
 
-    const session = await prisma.session.findUnique({
-      where: { id: payload.sid },
-      select: {
-        id: true,
-        user_id: true,
-        project_id: true,
-        status: true,
-        expires_at: true,
-        last_used_at: true,
-      },
-    });
-
-    if (!session) {
-      return next(appError(401, "Invalid or expired token", "token_invalid"));
-    }
-
-    // A validly signed token whose subject disagrees with its session is not an
-    // ordinary expiry; it means a token was minted against someone else's row.
-    if (session.user_id !== payload.userId) {
-      return next(appError(401, "Invalid or expired token", "token_invalid"));
-    }
-
-    // Same failure class as the user-id check above: a token minted for one
-    // project must never be honored against another project's session.
-    if (session.project_id !== payload.projectId) {
-      return next(appError(401, "Invalid or expired token", "token_invalid"));
-    }
-
-    if (session.status !== "ACTIVE") {
-      return next(appError(401, "Session is no longer active", "session_revoked"));
-    }
-
-    if (session.expires_at <= new Date()) {
-      return next(appError(401, "Session has expired", "session_expired"));
-    }
-
-    // Read-only on purpose: marking the row EXPIRED here would put a write on
-    // every authenticated request. An idle session stops refreshing, so its
-    // expiry freezes and the cleanup job reclaims it after retention.
-    if (isInactive(session, new Date())) {
-      return next(appError(401, "Session has expired", "session_expired"));
-    }
-
-    req.userId = session.user_id;
-    req.sessionId = session.id;
-    req.projectId = session.project_id;
-
-    next();
-  } catch (error) {
-    // Express 4 does not forward a rejected promise from a middleware, so an
-    // unhandled failure here would hang the request instead of returning 500.
-    next(error);
-  }
-};
+/** The wall's deliberate escape hatches: enrollment, disable, status, logout. */
+export const requireAuthMfaExempt = createRequireAuth({
+  enforceMfaWall: false,
+});

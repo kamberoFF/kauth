@@ -35,6 +35,7 @@ import {
   recordSecurityEvent,
   tryRecordSecurityEvent,
 } from "../lib/securityEvents";
+import { stampMfaGrace } from "../lib/mfaPolicy";
 import {
   clearAuthCookies,
   readRefreshCookie,
@@ -110,7 +111,9 @@ export const register: RequestHandler = async (req, res, next) => {
         tx,
       );
 
-      return { user, ...created };
+      const mfaGraceEndsAt = await stampMfaGrace(tx, user, projectId);
+
+      return { user, ...created, mfaGraceEndsAt };
     });
 
     const verificationToken = await issueRecoveryToken(
@@ -144,6 +147,9 @@ export const register: RequestHandler = async (req, res, next) => {
           firstName: result.user.first_name,
           lastName: result.user.last_name,
         },
+        ...(result.mfaGraceEndsAt && {
+          mfaGraceEndsAt: result.mfaGraceEndsAt.toISOString(),
+        }),
       },
       201,
       context.deviceId,
@@ -255,7 +261,9 @@ export const login: RequestHandler = async (req, res, next) => {
         tx,
       );
 
-      return created;
+      const mfaGraceEndsAt = await stampMfaGrace(tx, user, projectId);
+
+      return { ...created, mfaGraceEndsAt };
     });
 
     sendAuthResponse(
@@ -265,7 +273,11 @@ export const login: RequestHandler = async (req, res, next) => {
         accessToken: result.accessToken.token,
         refreshToken: result.refreshToken.token,
       },
-      {},
+      {
+        ...(result.mfaGraceEndsAt && {
+          mfaGraceEndsAt: result.mfaGraceEndsAt.toISOString(),
+        }),
+      },
       200,
       context.deviceId,
     );
