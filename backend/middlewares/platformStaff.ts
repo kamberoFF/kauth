@@ -6,10 +6,10 @@ import { requireProjectId, requireUserId } from "../utils/requestGuards";
 /**
  * Gates the platform-staff surface to `Role.ADMIN` users of the reserved
  * platform Project — the one role distinction with server-defined meaning
- * (clerk-clone ticket 03). Deliberately zero queries: requireAuth has just
- * read the user row and left the fresh role on req (ADR 0007), so a demoted
- * admin loses access on their very next request even while their old token
- * still carries an ADMIN claim.
+ * (pinned by .scratch/clerk-clone/issues/03). Deliberately zero queries:
+ * requireAuth has just read the user row and left the fresh role on req
+ * (ADR 0007), so a demoted admin loses access on their very next request
+ * even while their old token still carries an ADMIN claim.
  *
  * Session-only by construction: requireAuth runs first, and a request
  * bearing only an API key never gets this far.

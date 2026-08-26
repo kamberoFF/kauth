@@ -47,6 +47,24 @@ const USER_LIST_SELECT = {
   created_at: true,
 } as const;
 
+/**
+ * Shared guard for the surface's path parameters: a malformed UUID is a
+ * malformed request (400), never a lookup miss (404) — the same split every
+ * other parameter-validated route in kauth draws.
+ */
+function uuidParamOr400(
+  value: string | undefined,
+  field: "project" | "session" | "user",
+): string {
+  const id = value ?? "";
+
+  if (!UUID_REGEX.test(id)) {
+    throw appError(400, `Invalid ${field} id`, `${field}_id_invalid`);
+  }
+
+  return id;
+}
+
 function serializeUser(user: {
   id: string;
   email: string;
@@ -67,11 +85,7 @@ function serializeUser(user: {
 
 export const listProjectUsers: RequestHandler = async (req, res, next) => {
   try {
-    const projectId = req.params.projectId ?? "";
-
-    if (!UUID_REGEX.test(projectId)) {
-      return next(appError(400, "Invalid project id", "project_id_invalid"));
-    }
+    const projectId = uuidParamOr400(req.params.projectId, "project");
 
     const project = await prisma.project.findUnique({
       where: { id: projectId },
@@ -95,10 +109,6 @@ export const listProjectUsers: RequestHandler = async (req, res, next) => {
 };
 
 async function findSessionOr404(sessionId: string) {
-  if (!UUID_REGEX.test(sessionId)) {
-    throw appError(400, "Invalid session id", "session_id_invalid");
-  }
-
   const session = await prisma.session.findFirst({
     where: { id: sessionId },
     select: {
@@ -121,7 +131,9 @@ async function findSessionOr404(sessionId: string) {
 
 export const getSession: RequestHandler = async (req, res, next) => {
   try {
-    const session = await findSessionOr404(req.params.sessionId ?? "");
+    const session = await findSessionOr404(
+      uuidParamOr400(req.params.sessionId, "session"),
+    );
 
     res.json({
       id: session.id,
@@ -139,7 +151,7 @@ export const getSession: RequestHandler = async (req, res, next) => {
 
 export const revokeSession: RequestHandler = async (req, res, next) => {
   try {
-    const sessionId = req.params.sessionId ?? "";
+    const sessionId = uuidParamOr400(req.params.sessionId, "session");
     // Scoped by nothing but existence, deliberately: cross-project reach is
     // the staff surface's whole point, unlike the secret-key route this
     // shadows. Active-only so a revoke of a dead session stays a clean 404.
@@ -183,11 +195,7 @@ export const setUserRole: RequestHandler = async (req, res, next) => {
       return next(appError(400, "Invalid input", "validation"));
     }
 
-    const targetUserId = req.params.userId ?? "";
-
-    if (!UUID_REGEX.test(targetUserId)) {
-      return next(appError(400, "Invalid user id", "user_id_invalid"));
-    }
+    const targetUserId = uuidParamOr400(req.params.userId, "user");
 
     // Role changes are platform-staff business only (ADR 0007): a tenant
     // Project's end-user roles belong to whoever asks for that feature, and

@@ -33,7 +33,7 @@ user, appears in no token, and gates nothing."
   team is the bootstrap script, not a special case in the endpoint.
 - **Bootstrap is a script plus a staff endpoint.** Nothing sets roles today,
   so the first admin cannot come from HTTP alone. An idempotent
-  `scripts/promote-staff.ts` promotes an existing platform-Project user by
+  `scripts/promoteStaff.ts` promotes an existing platform-Project user by
   email at deploy time; after that, staff promote further staff over the API.
 
 ## Non-goals

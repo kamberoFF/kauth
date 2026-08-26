@@ -365,6 +365,13 @@ export const exchangeOAuthCode: RequestHandler = async (req, res, next) => {
       select: { role: true, mfa_enrolled_at: true },
     });
 
+    // Same treatment as a consumed/unknown code: the exchange record named
+    // an existing row moments ago, so null here means the account vanished
+    // mid-exchange and there is nothing left to sign in to.
+    if (!user) {
+      return next(appError(400, "Invalid or expired code", "token_invalid"));
+    }
+
     if (user?.mfa_enrolled_at) {
       const challengeToken = await issueRecoveryToken(
         record.user_id,
@@ -393,10 +400,7 @@ export const exchangeOAuthCode: RequestHandler = async (req, res, next) => {
         record.user_id,
         record.project_id,
         context,
-        // Unreachable as USER: the exchange record names an existing row, so
-        // user is only null mid-deletion — where session.create's FK fails
-        // before anything is minted into a response.
-        user?.role ?? "USER",
+        user.role,
       );
 
       await recordSecurityEvent(

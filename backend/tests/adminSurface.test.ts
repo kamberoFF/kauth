@@ -310,7 +310,7 @@ describe("POST /admin/users/:userId/role", () => {
   });
 });
 
-describe("scripts/promote-staff.ts", () => {
+describe("scripts/promoteStaff.ts", () => {
   async function runScript(args: string[]) {
     const proc = Bun.spawn(["bun", "scripts/promoteStaff.ts", ...args], {
       env: process.env,
@@ -332,6 +332,19 @@ describe("scripts/promote-staff.ts", () => {
       await prisma.user.findUniqueOrThrow({ where: { id: user.userId } })
     ).role;
     expect(role).toBe("ADMIN");
+
+    // Same audit discipline as the HTTP path: a role grant leaves a trace.
+    const event = await prisma.securityEvent.findFirstOrThrow({
+      where: { event_type: "ROLE_CHANGED" },
+      orderBy: { created_at: "desc" },
+    });
+    expect(event.severity).toBe("WARNING");
+    expect(event.metadata).toMatchObject({
+      old_role: "USER",
+      new_role: "ADMIN",
+      actor_user_id: null,
+      via: "bootstrap_script",
+    });
 
     const again = await runScript(["--email", "script-promoted@example.com"]);
     expect(again.exitCode).toBe(0);
@@ -366,14 +379,16 @@ describe("the whole /admin surface refuses non-staff credentials", () => {
   it.each(PATHS)(
     "answers 401 to a bare API key on %s %s — keys never reach the staff surface",
     async (method, path) => {
-      // No bearer token, no cookie: an API key authenticates as a Project,
-      // and requireAuth rejects the request before any key logic runs.
-      const response = await api(method, path, {
-        headers: { "x-api-key": "sk_whatever_secret_key" },
-      });
+      // Either tier: no bearer token and no cookie means requireAuth rejects
+      // the request before any key logic runs, whatever the key claims.
+      for (const key of ["sk_whatever_secret_key", "pk_whatever_publishable"]) {
+        const response = await api(method, path, {
+          headers: { "x-api-key": key },
+        });
 
-      expect(response.status).toBe(401);
-      expect(response.body.error.code).toBe("token_missing");
+        expect(response.status).toBe(401);
+        expect(response.body.error.code).toBe("token_missing");
+      }
     },
   );
 
@@ -384,6 +399,25 @@ describe("the whole /admin surface refuses non-staff credentials", () => {
 
       const response = await api(method, path, {
         accessToken: user.accessToken,
+        body: method === "POST" ? { role: "ADMIN" } : undefined,
+      });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe("staff_forbidden");
+    },
+  );
+
+  it.each(PATHS)(
+    "answers 403 staff_forbidden to a tenant-Project ADMIN on %s %s",
+    async (method, path) => {
+      const admin = await makeTenantUser("tenant-admin-surface");
+      await prisma.user.update({
+        where: { id: admin.userId },
+        data: { role: "ADMIN" },
+      });
+
+      const response = await api(method, path, {
+        accessToken: admin.accessToken,
         body: method === "POST" ? { role: "ADMIN" } : undefined,
       });
 

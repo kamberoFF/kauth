@@ -120,7 +120,6 @@ The first staff member is bootstrapped outside HTTP:
 
 ### Errors
 
-
 Every failure returns the same shape:
 
 ```json
