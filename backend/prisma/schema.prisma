@@ -515,6 +515,13 @@ enum SecurityEventType {
   MFA_DISABLED
   BACKUP_CODE_USED
   PROJECT_MFA_POLICY_CHANGED
+
+  /**
+   * A platform staff member changed a user's role (ADR 0007 scope). WARNING
+   * like every privilege transition; metadata carries old_role/new_role and
+   * the acting staff id.
+   */
+  ROLE_CHANGED
 }
 
 enum SecurityEventSeverity {

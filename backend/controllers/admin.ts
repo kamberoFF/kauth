@@ -1,5 +1,12 @@
 import { type RequestHandler } from "express";
 import { prisma } from "../lib/prisma";
+import { PLATFORM_PROJECT_ID } from "../constants/platform";
+import { UUID_REGEX } from "../constants/regex";
+import { roleChangeSchema } from "../lib/validation";
+import { appError } from "../utils/errors";
+import { requireUserId } from "../utils/requestGuards";
+import { revokeSessions } from "../lib/sessions";
+import { recordSecurityEvent, requestContext } from "../lib/securityEvents";
 
 /**
  * Platform-staff controllers (routes/admin.ts). Every query is deliberately
@@ -26,6 +33,213 @@ export const listProjects: RequestHandler = async (_req, res, next) => {
         createdAt: project.created_at,
       })),
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const USER_LIST_SELECT = {
+  id: true,
+  email: true,
+  username: true,
+  email_verified: true,
+  role: true,
+  created_at: true,
+} as const;
+
+function serializeUser(user: {
+  id: string;
+  email: string;
+  username: string | null;
+  email_verified: boolean;
+  role: "USER" | "ADMIN";
+  created_at: Date;
+}) {
+  return {
+    id: user.id,
+    email: user.email,
+    username: user.username,
+    emailVerified: user.email_verified,
+    role: user.role,
+    createdAt: user.created_at,
+  };
+}
+
+export const listProjectUsers: RequestHandler = async (req, res, next) => {
+  try {
+    const projectId = req.params.projectId ?? "";
+
+    if (!UUID_REGEX.test(projectId)) {
+      return next(appError(400, "Invalid project id", "project_id_invalid"));
+    }
+
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true },
+    });
+
+    if (!project) {
+      return next(appError(404, "Project not found", "project_not_found"));
+    }
+
+    const users = await prisma.user.findMany({
+      where: { project_id: projectId },
+      orderBy: { created_at: "asc" },
+      select: USER_LIST_SELECT,
+    });
+
+    res.json({ users: users.map(serializeUser) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+async function findSessionOr404(sessionId: string) {
+  if (!UUID_REGEX.test(sessionId)) {
+    throw appError(400, "Invalid session id", "session_id_invalid");
+  }
+
+  const session = await prisma.session.findFirst({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      user_id: true,
+      status: true,
+      created_at: true,
+      last_used_at: true,
+      expires_at: true,
+      revoked_at: true,
+    },
+  });
+
+  if (!session) {
+    throw appError(404, "Session not found", "session_not_found");
+  }
+
+  return session;
+}
+
+export const getSession: RequestHandler = async (req, res, next) => {
+  try {
+    const session = await findSessionOr404(req.params.sessionId ?? "");
+
+    res.json({
+      id: session.id,
+      userId: session.user_id,
+      status: session.status,
+      createdAt: session.created_at,
+      lastUsedAt: session.last_used_at,
+      expiresAt: session.expires_at,
+      revokedAt: session.revoked_at,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const revokeSession: RequestHandler = async (req, res, next) => {
+  try {
+    const sessionId = req.params.sessionId ?? "";
+    // Scoped by nothing but existence, deliberately: cross-project reach is
+    // the staff surface's whole point, unlike the secret-key route this
+    // shadows. Active-only so a revoke of a dead session stays a clean 404.
+    const session = await prisma.session.findFirst({
+      where: { id: sessionId, status: "ACTIVE" },
+      select: { id: true, user_id: true, project_id: true },
+    });
+
+    if (!session) {
+      return next(appError(404, "Session not found", "session_not_found"));
+    }
+
+    const actorUserId = requireUserId(req);
+
+    await prisma.$transaction(async (tx) => {
+      await revokeSessions(tx, { id: session.id }, "staff_revoked");
+
+      await recordSecurityEvent(
+        {
+          type: "SESSION_REVOKED",
+          userId: session.user_id,
+          sessionId: session.id,
+          projectId: session.project_id,
+          ...requestContext(req),
+          metadata: { actor_user_id: actorUserId },
+        },
+        tx,
+      );
+    });
+
+    res.json({ message: "Session revoked" });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const setUserRole: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = roleChangeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return next(appError(400, "Invalid input", "validation"));
+    }
+
+    const targetUserId = req.params.userId ?? "";
+
+    if (!UUID_REGEX.test(targetUserId)) {
+      return next(appError(400, "Invalid user id", "user_id_invalid"));
+    }
+
+    // Role changes are platform-staff business only (ADR 0007): a tenant
+    // Project's end-user roles belong to whoever asks for that feature, and
+    // until then an exists-but-tenant target collapses into the same 404 as
+    // a nonexistent one.
+    const target = await prisma.user.findFirst({
+      where: { id: targetUserId, project_id: PLATFORM_PROJECT_ID },
+      select: { id: true, role: true },
+    });
+
+    if (!target) {
+      return next(appError(404, "User not found", "user_not_found"));
+    }
+
+    const actorUserId = requireUserId(req);
+
+    // A lone staff member demoting themselves has no one left to undo it;
+    // recovery runs through scripts/promote-staff.ts instead of a special
+    // case here.
+    if (targetUserId === actorUserId) {
+      return next(
+        appError(
+          403,
+          "Staff cannot change their own role",
+          "self_role_change",
+        ),
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: target.id },
+        data: { role: parsed.data.role },
+      });
+
+      await recordSecurityEvent(
+        {
+          type: "ROLE_CHANGED",
+          userId: target.id,
+          projectId: PLATFORM_PROJECT_ID,
+          ...requestContext(req),
+          metadata: {
+            old_role: target.role,
+            new_role: parsed.data.role,
+            actor_user_id: actorUserId,
+          },
+        },
+        tx,
+      );
+    });
+
+    res.json({ message: "Role updated", role: parsed.data.role });
   } catch (error) {
     next(error);
   }

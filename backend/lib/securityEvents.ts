@@ -45,6 +45,9 @@ const SEVERITY: Record<SecurityEventType, SecurityEventSeverity> = {
   MFA_DISABLED: SecurityEventSeverity.WARNING,
   BACKUP_CODE_USED: SecurityEventSeverity.WARNING,
   PROJECT_MFA_POLICY_CHANGED: SecurityEventSeverity.WARNING,
+
+  // Privilege transition (ADR 0007 scope): a staff member changed a role.
+  ROLE_CHANGED: SecurityEventSeverity.WARNING,
 };
 
 export interface SecurityEventInput {

@@ -22,7 +22,8 @@ export type RevocationReason =
   | "password_changed"
   | "password_reset"
   | "user_revoked"
-  | "api_key_revoked";
+  | "api_key_revoked"
+  | "staff_revoked";
 
 export interface ClientContext {
   deviceId: string;

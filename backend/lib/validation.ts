@@ -104,3 +104,11 @@ export const mfaDisableSchema = z.object({
   password: z.string().min(1).max(200),
   code: z.string().min(1).max(20),
 });
+
+/**
+ * Role values are closed by the database enum; anything else is a malformed
+ * request, not a "wrong role" outcome.
+ */
+export const roleChangeSchema = z.object({
+  role: z.enum(["USER", "ADMIN"]),
+});
