@@ -5,6 +5,7 @@ import { logger } from "./lib/logger";
 import { gracefulShutdown } from "./lib/shutdown";
 import { ensurePlatformProject } from "./lib/platformProject";
 import { closeRateLimitRedis } from "./lib/rateLimitStore";
+import { bootMailer } from "./lib/mail";
 
 /**
  * Concurrent replicas serialize on Prisma's own Postgres advisory lock during
@@ -35,6 +36,10 @@ async function applyMigrations() {
 }
 
 async function main() {
+  // First, before any DB work: a misconfigured transport must abort the boot
+  // now, and production must not start on the console transport at all.
+  await bootMailer({ nodeEnv: config.node_env });
+
   await applyMigrations();
   await ensurePlatformProject();
 

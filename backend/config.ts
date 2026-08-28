@@ -94,6 +94,14 @@ const schema = z.object({
     .stringbool()
     .default(false),
   /**
+   * Names an operator-supplied module that exports a `Mailer` (as its
+   * `default` export or a named `mailer` export). Loaded at startup by
+   * `bootMailer` (lib/mail.ts), which owns path resolution and error
+   * reporting — no validation here. kauth ships no transport, and production
+   * refuses to boot without one configured.
+   */
+  MAILER_MODULE: z.string().optional(),
+  /**
    * Comma-separated origins allowed to make state-changing requests. Defaults
    * to the frontend and the service's own origin.
    */
@@ -208,6 +216,7 @@ const config = {
   app_url: env.APP_URL,
   trust_proxy: env.TRUST_PROXY === "false" ? false : env.TRUST_PROXY,
   require_email_verification: env.REQUIRE_EMAIL_VERIFICATION,
+  mailer_module: env.MAILER_MODULE,
   trusted_origins: trustedOrigins(),
   oauth: {
     google: credentialPair(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET),

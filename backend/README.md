@@ -177,13 +177,46 @@ registerOAuthProvider({
 ## Email
 
 kauth does not pick a mail provider. The default transport prints to stdout so
-local flows are complete and inspectable. Supply your own at startup:
+local flows are complete and inspectable — but it is a development-only
+transport, and **a production instance refuses to start without a real one
+configured** (the same fail-fast posture as an unsafe `JWT_SECRET`).
 
-```ts
-import { setMailer } from "./lib/mail";
+Supply your own transport one of two ways:
 
-setMailer({ async send(mail) { /* … */ } });
-```
+- **`MAILER_MODULE`** (declarative) — set it to a module path, resolved
+  relative to the working directory. The module must export a `Mailer` as its
+  `default` export **or** as a named `mailer` export:
+
+  ```ts
+  // mailer.ts
+  import type { Mailer } from "./lib/mail";
+
+  export const mailer: Mailer = {
+    async send(mail) {
+      /* hand mail.to / mail.subject / mail.text to your provider */
+    },
+  };
+  ```
+
+  ```bash
+  MAILER_MODULE=./mailer.ts
+  ```
+
+  A missing path, an import failure, or a module with no valid `Mailer` export
+  aborts the boot with an error naming `MAILER_MODULE` and the problem. The
+  transport is installed before migrations run.
+
+- **`setMailer`** (programmatic) — call it at startup from your own entrypoint:
+
+  ```ts
+  import { setMailer } from "./lib/mail";
+
+  setMailer({ async send(mail) { /* … */ } });
+  ```
+
+The first time a mail is sent through the console transport, kauth logs a
+one-time warning — a reminder, not a failure; the console transport is a
+legitimate local choice.
 
 ## Documentation
 

@@ -184,7 +184,7 @@ finish() {
 # STAGES
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=9
+TOTAL_STAGES=10
 
 banner "kauth setup"
 
@@ -324,18 +324,40 @@ else
 fi
 pause
 
-# ── Stage 7: email verification flag ───────────────────────────────────────
+# ── Stage 7: mail transport ────────────────────────────────────────────────
+stage "Mail transport"
+say "kauth ships no mail transport. The default prints verification links and"
+say "reset tokens to stdout — fine for local dev, never for production, which"
+say "refuses to boot without a real one configured."
+say "MAILER_MODULE names your own module (resolved from the working"
+say "directory) exporting a Mailer as its default export or a named 'mailer'"
+say "export. Leave blank to keep the dev console transport."
+ask MAILER_MODULE "Path to your mailer module [blank = console transport]:"
+if [[ -n "$MAILER_MODULE" ]]; then
+  write_env MAILER_MODULE "$MAILER_MODULE"
+else
+  note "left unset — the dev console transport stays active (development only)"
+fi
+pause
+
+# ── Stage 8: email verification flag ───────────────────────────────────────
 stage "Email verification policy"
 say "REQUIRE_EMAIL_VERIFICATION=true refuses credential logins until the"
-say "address is confirmed. kauth ships no stock mail transport — a deploy"
-say "supplies its own via setMailer() — so turning this on before a real"
-say "transport exists locks every user out."
-warn "Leave this false until email delivery actually works."
-ask REQUIRE_EMAIL_VERIFICATION "Require verified email for login? [false]:"
-[[ -z "$REQUIRE_EMAIL_VERIFICATION" ]] && REQUIRE_EMAIL_VERIFICATION="false"
-write_env REQUIRE_EMAIL_VERIFICATION "$REQUIRE_EMAIL_VERIFICATION"
+say "address is confirmed. Turning it on without working email delivery locks"
+say "every user out."
+if [[ -n "$MAILER_MODULE" ]]; then
+  say "A mail transport is configured, so this is safe to enable."
+  ask REQUIRE_EMAIL_VERIFICATION "Require verified email for login? [false]:"
+  [[ -z "$REQUIRE_EMAIL_VERIFICATION" ]] && REQUIRE_EMAIL_VERIFICATION="false"
+  write_env REQUIRE_EMAIL_VERIFICATION "$REQUIRE_EMAIL_VERIFICATION"
+else
+  write_env REQUIRE_EMAIL_VERIFICATION "false"
+  note "forced to false — no mail transport is configured (see previous stage)"
+  SKIPPED+=("Email verification — revisit REQUIRE_EMAIL_VERIFICATION once MAILER_MODULE is set")
+fi
+pause
 
-# ── Stage 8: cleanup job schedule ──────────────────────────────────────────
+# ── Stage 9: cleanup job schedule ──────────────────────────────────────────
 stage "Cleanup job schedule"
 say "scripts/cleanup.ts deletes sessions and audit events past retention."
 say "It is a plain script — nothing schedules it for you. Daily is typical:"
@@ -351,7 +373,7 @@ say "AUDIT_RETENTION_DAYS (default 365); see docs/adr/0004."
 SKIPPED+=("Cleanup scheduling — install the cron line/systemd timer shown above")
 pause
 
-# ── Stage 9: first staff member ────────────────────────────────────────────
+# ── Stage 10: first staff member ───────────────────────────────────────────
 stage "First platform staff member"
 say "Nothing grants ADMIN over HTTP until one staff member exists. The"
 say "bootstrap promotes an already-registered platform-project user:"
