@@ -24,22 +24,25 @@ const kauth = createKauthClient({
   deviceId: localStorage.getItem("kauth_device") ?? undefined,
 });
 
-// Registration signs the user in and returns their profile.
-const user = await kauth.signUp({
+// Registration does NOT sign the user in (ADR 0008): it resolves with no
+// session, and a duplicate email resolves the same as a fresh signup —
+// indistinguishable by design. Call signIn next.
+await kauth.signUp({
   email: "ada@example.com",
   username: "ada",
   password: "correct-horse-battery",
 });
 
-// Sign-in returns tokens only (no profile).
+// Sign-in returns tokens only (no profile) and transitions the store.
 await kauth.signIn({ email: "ada@example.com", password: "correct-horse-battery" });
 
 // Reactive state for your UI.
 kauth.subscribe(() => console.log(kauth.getSnapshot().status));
 ```
 
-Errors throw as `KauthError` carrying the platform's code (`duplicate_email`,
-`auth_failed`, `validation`, …), not a generic wrapper.
+Errors throw as `KauthError` carrying the platform's code (`duplicate_username`,
+`auth_failed`, `validation`, …), not a generic wrapper. `signUp` no longer
+surfaces `duplicate_email` — the platform stopped returning it (ADR 0008).
 
 ## Two-phase sign-in (MFA)
 

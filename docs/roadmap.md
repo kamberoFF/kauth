@@ -3,7 +3,7 @@
 **Living document.** Unlike the dated audit and remediation logs, this file is
 kept current — if it disagrees with the code, the file is wrong.
 
-Last reviewed: 2026-08-28.
+Last reviewed: 2026-08-29.
 
 **Multi-tenancy pivot: foundation complete.** As of 2026-08-22 kauth has been
 extended into a self-hosted, multi-tenant auth platform — see
@@ -28,12 +28,13 @@ two-phase login, and an optional project mandate — shipped 2026-08-25/26
 claim rides every access token while authorization stays DB-fresh, and a
 platform-staff surface landed under `/admin/*` (ADR 0007). The
 deferred-closeout batch (`.scratch/deferred-closeout/plan.md`) is now
-underway: an integration-supplied mailer posture shipped 2026-08-28 — a
-production instance refuses to start without an explicitly configured mail
-transport (see "Operations" below). **Next up:** the rest of that batch —
-closing the registration duplicate-email oracle by dropping register
-auto-login, tenant-admin gating, per-Project OAuth apps, and the first
-frontend auth pages — then passkeys and asymmetric access-token signing.
+underway. Epic 1 is complete: an integration-supplied mailer posture shipped
+2026-08-28 — a production instance refuses to start without an explicitly
+configured mail transport (see "Operations" below) — and register dropped
+auto-login on 2026-08-29, closing the last identity oracle (generic `202`,
+no session; ADR 0008; contract → `0.6.0`). **Next up:** the rest of that
+batch — tenant-admin gating, per-Project OAuth apps, and the first frontend
+auth pages — then passkeys and asymmetric access-token signing.
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
 That plan was written in June 2026, before any of it was built; the parts that
@@ -72,7 +73,7 @@ Enough context to read the rest of this file.
   (`SESSION_INACTIVITY_DAYS`, default 14) rejects idle sessions.
 - **Audit log** — `security_events` written for every auth-relevant transition,
   with severity derived from the event type rather than the call site.
-- **Verification** — 395 integration tests against real Postgres covering
+- **Verification** — 410 integration tests against real Postgres covering
   abuse cases (reuse, revoked-session access, throttling, device mismatch,
   CSRF, MFA challenges, staff-gate bypasses), run in CI alongside typecheck,
   lint, and `bun audit`.
@@ -120,22 +121,25 @@ a legacy shorter credential can still sign in. HIBP breach checking was
 not deferred). Contract version bumped to 0.3.0 (creation shape grew, new
 PATCH route).
 
-### 3. Close the identity oracles — login timing closed 2026-08-24
+### 3. Close the identity oracles — closed 2026-08-29
 
 - ~~Login short-circuits before hashing when the user is unknown, so response
   timing distinguishes the two cases.~~ **Done 2026-08-24** — every login now
   runs exactly one comparison against a dummy hash when no stored credential
   exists (`backend/lib/passwords.ts`).
-- Registration returns 409 on a duplicate email, which tells an
-  unauthenticated caller whether an account exists. **Deferred as accepted
-  residual risk** — fully closing it requires register to stop auto-logging-in
-  (a duplicate-email caller cannot receive tokens indistinguishable from the
-  happy path), a register-contract change frozen behind ADR 0003's
-  `X-Kauth-Contract-Version`. Revisit only by explicitly re-deciding that
-  contract question. The `duplicate_username` 409 is not an oracle: usernames
-  are user-chosen public handles. See `.scratch/identity-oracles/`. **Update
-  2026-08-26:** the re-decision has been made — register drops auto-login;
-  see `.scratch/deferred-closeout/plan.md`, epic pending.
+- ~~Registration returns 409 on a duplicate email, which tells an
+  unauthenticated caller whether an account exists.~~ **Done 2026-08-29
+  (ADR 0008)** — register dropped auto-login. Every well-formed call now
+  returns the same generic `202` with no session; the happy path and the
+  duplicate-email path are byte-identical and both pay one Argon2id hash and
+  one mail round-trip, so neither the status code, the body, nor the timing
+  leaks membership. A duplicate email instead gets a server-side-only
+  `REGISTER_DUPLICATE_EMAIL` audit event and a tokenless "someone tried to
+  sign up" notice. Breaking register-contract change → contract `0.6.0`, both
+  SDKs redeployed; `client-sdk` `signUp` resolves to `void` and the caller
+  calls `signIn` next. The `duplicate_username` 409 deliberately stays:
+  usernames are user-chosen public handles, not a membership oracle. See
+  `.scratch/register-oracle/` and `.scratch/identity-oracles/`.
 
 ### 4. Session policy — done 2026-08-24
 

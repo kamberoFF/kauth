@@ -522,6 +522,14 @@ enum SecurityEventType {
    * the acting staff id.
    */
   ROLE_CHANGED
+
+  /**
+   * A register attempt on an already-registered email (ADR 0008). The
+   * response is deliberately indistinguishable from a fresh signup, so this
+   * server-side-only event is the only place a repeat attempt on a known
+   * address is visible. Attributed to the existing user.
+   */
+  REGISTER_DUPLICATE_EMAIL
 }
 
 enum SecurityEventSeverity {

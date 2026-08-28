@@ -35,7 +35,7 @@ describe("origin validation", () => {
       headers: { origin: TRUSTED_ORIGIN },
     });
 
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(202);
   });
 
   it("rejects a state-changing request from an untrusted origin", async () => {
@@ -79,7 +79,7 @@ describe("origin validation", () => {
       projectId: project.id,
     });
 
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(202);
   });
 
   it("rejects a request that declares itself cross-site via fetch metadata", async () => {
@@ -126,7 +126,7 @@ describe("csrf double submit", () => {
       headers: { cookie, "x-csrf-token": token },
     });
 
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(202);
   });
 
   it("rejects a cookie-bearing request with no token header", async () => {
@@ -187,6 +187,6 @@ describe("csrf double submit", () => {
       projectId: project.id,
     });
 
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(202);
   });
 });

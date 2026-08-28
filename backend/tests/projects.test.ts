@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 import {
   api,
   createTestProject,
+  registerAndSignIn,
   resetDatabase,
   startTestServer,
   stopTestServer,
@@ -16,11 +17,9 @@ const credentials = {
   password: "correct-horse-battery",
 };
 
+// Register→login (ADR 0008): register no longer signs the developer in.
 function registerDeveloper() {
-  return api("POST", "/register", {
-    body: credentials,
-    projectId: PLATFORM_PROJECT_ID,
-  });
+  return registerAndSignIn(credentials, PLATFORM_PROJECT_ID);
 }
 
 beforeAll(startTestServer);
@@ -49,7 +48,7 @@ describe("reserved platform project", () => {
 describe("developer register/login through the reserved project", () => {
   it("registers a developer into the platform project", async () => {
     const response = await registerDeveloper();
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(200);
 
     const user = await prisma.user.findUniqueOrThrow({
       where: {
@@ -152,10 +151,7 @@ describe("POST /projects", () => {
       password: "correct-horse-battery",
     };
 
-    const registered = await api("POST", "/register", {
-      body: endUser,
-      projectId: ordinaryProject.id,
-    });
+    const registered = await registerAndSignIn(endUser, ordinaryProject.id);
 
     const response = await api("POST", "/projects", {
       body: { name: "Should Not Exist" },
@@ -183,7 +179,7 @@ describe("POST /projects", () => {
 describe("end-to-end bootstrap flow", () => {
   it("registers a developer, logs in, and creates a project they own", async () => {
     const registered = await registerDeveloper();
-    expect(registered.status).toBe(201);
+    expect(registered.status).toBe(200);
 
     const loggedIn = await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },

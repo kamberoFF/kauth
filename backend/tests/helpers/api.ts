@@ -228,6 +228,62 @@ export async function createTestProject(overrides?: { name?: string }) {
 }
 
 /**
+ * Register then sign in — the sequence every suite that just wants "a
+ * logged-in user in a project" now needs, since register stopped returning a
+ * session (`.scratch/register-oracle`, ADR 0008). Returns the sign-in
+ * response with a synthesized `user` object (id / email / username / profile
+ * read back from the row), so the many call sites that read
+ * `body.accessToken` / `body.refreshToken` / `body.user.id` keep working
+ * against one place instead of each learning the two-call dance.
+ */
+export async function registerAndSignIn(
+  credentials: { email: string; username: string; password: string },
+  projectId: string,
+  options: { deviceId?: string | null } = {},
+): Promise<ApiResponse> {
+  await api("POST", "/register", {
+    body: credentials,
+    projectId,
+    deviceId: options.deviceId,
+  });
+
+  const signedIn = await api("POST", "/login", {
+    body: { email: credentials.email, password: credentials.password },
+    projectId,
+    deviceId: options.deviceId,
+  });
+
+  const user = await prisma.user.findUnique({
+    where: { project_id_email: { project_id: projectId, email: credentials.email } },
+    select: {
+      id: true,
+      email: true,
+      username: true,
+      email_verified: true,
+      first_name: true,
+      last_name: true,
+    },
+  });
+
+  return {
+    ...signedIn,
+    body: {
+      ...signedIn.body,
+      user: user
+        ? {
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            emailVerified: user.email_verified,
+            firstName: user.first_name,
+            lastName: user.last_name,
+          }
+        : null,
+    },
+  };
+}
+
+/**
  * The bootstrap flow ticket 03 built (register a developer into the reserved
  * platform project, log in, create a project through the session), reused
  * here since key-issuance/API-key-auth tests need a fresh owned project
@@ -244,21 +300,18 @@ export async function createOwnedProject(overrides?: { projectName?: string }) {
     password: "correct-horse-battery",
   };
 
-  const registered = await api("POST", "/register", {
-    body: credentials,
-    projectId: PLATFORM_PROJECT_ID,
-  });
+  const developer = await registerAndSignIn(credentials, PLATFORM_PROJECT_ID);
 
   const created = await api("POST", "/projects", {
     body: { name: overrides?.projectName ?? "Owned Project" },
-    accessToken: registered.body.accessToken,
+    accessToken: developer.body.accessToken,
   });
 
   return {
     project: created.body as { id: string; name: string; ownerId: string },
     developer: {
-      userId: registered.body.user.id as string,
-      accessToken: registered.body.accessToken as string,
+      userId: developer.body.user.id as string,
+      accessToken: developer.body.accessToken as string,
     },
   };
 }

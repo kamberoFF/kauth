@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import {
   api,
+  registerAndSignIn,
   createOwnedProject,
   createTestProject,
   resetDatabase,
@@ -37,11 +38,12 @@ async function bootstrap() {
   const publishable = await issueKeyValue(developer.accessToken, owned.id, "PUBLISHABLE");
   const sdk = createKauthBackend({ baseUrl, secretKey });
 
-  const registered = await api("POST", "/register", {
-    body: { email: "enduser@example.com", username: "enduser", password: "correct-horse-battery" },
-    apiKey: publishable,
-  });
-  const accessToken = registered.body.accessToken as string;
+  // Register→login (ADR 0008): register no longer returns a session.
+  const signedIn = await registerAndSignIn(
+    { email: "enduser@example.com", username: "enduser", password: "correct-horse-battery" },
+    owned.id,
+  );
+  const accessToken = signedIn.body.accessToken as string;
 
   const session = await prisma.session.findFirstOrThrow({
     where: { project_id: owned.id, status: "ACTIVE" },

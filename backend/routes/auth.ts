@@ -7,16 +7,21 @@ import {
   loginAccountLimiter,
   loginIpLimiter,
   refreshLimiter,
+  registerAccountLimiter,
   registerLimiter,
 } from "../middlewares/rateLimit";
 
 const router = Router();
 
+// No `resolveDevice`: register no longer establishes a device or a session,
+// so a missing or malformed device header is not its concern — device
+// identity is established at /login (ADR 0008). `registerAccountLimiter`
+// sits behind the by-IP `registerLimiter` for mailbomb parity with recovery.
 router.post(
   "/register",
   resolveProjectFromKeyOrHeader,
   registerLimiter,
-  resolveDevice,
+  registerAccountLimiter,
   register,
 );
 router.post(

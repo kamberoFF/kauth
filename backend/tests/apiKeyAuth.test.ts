@@ -25,6 +25,25 @@ function loginEndUser(apiKey: string, email = "enduser@example.com") {
   });
 }
 
+/**
+ * Register→login for an end user reached through an API key (ADR 0008:
+ * register no longer returns a session). Synthesizes `body.user` from the row
+ * so call sites that need the user id keep working.
+ */
+async function registerAndSignInEndUser(
+  apiKey: string,
+  email = "enduser@example.com",
+) {
+  await registerEndUser(apiKey, email);
+  const signedIn = await loginEndUser(apiKey, email);
+  const user = await prisma.user.findFirstOrThrow({ where: { email } });
+
+  return {
+    ...signedIn,
+    body: { ...signedIn.body, user: { id: user.id } },
+  };
+}
+
 beforeAll(startTestServer);
 afterAll(stopTestServer);
 beforeEach(resetDatabase);
@@ -36,7 +55,7 @@ describe("publishable key", () => {
 
     const response = await registerEndUser(publishable);
 
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(202);
     const user = await prisma.user.findUniqueOrThrow({
       where: { project_id_email: { project_id: project.id, email: "enduser@example.com" } },
     });
@@ -107,7 +126,7 @@ describe("secret key", () => {
     const secret = await issueKeyValue(developer.accessToken, project.id, "SECRET");
 
     const registered = await registerEndUser(secret);
-    expect(registered.status).toBe(201);
+    expect(registered.status).toBe(202);
 
     const loggedIn = await loginEndUser(secret);
     expect(loggedIn.status).toBe(200);
@@ -128,7 +147,7 @@ describe("secret key", () => {
   it("verifies a live session", async () => {
     const { project, developer } = await createOwnedProject();
     const secret = await issueKeyValue(developer.accessToken, project.id, "SECRET");
-    const registered = await registerEndUser(secret);
+    const registered = await registerAndSignInEndUser(secret);
 
     const session = await prisma.session.findFirstOrThrow({
       where: { user_id: registered.body.user.id },
@@ -144,7 +163,7 @@ describe("secret key", () => {
   it("revokes a session, immediately invalidating its access token", async () => {
     const { project, developer } = await createOwnedProject();
     const secret = await issueKeyValue(developer.accessToken, project.id, "SECRET");
-    const registered = await registerEndUser(secret);
+    const registered = await registerAndSignInEndUser(secret);
 
     const session = await prisma.session.findFirstOrThrow({
       where: { user_id: registered.body.user.id },
@@ -191,7 +210,10 @@ describe("secret key", () => {
   it("cannot verify or revoke a session belonging to another project", async () => {
     const other = await createOwnedProject();
     const otherSecret = await issueKeyValue(other.developer.accessToken, other.project.id, "SECRET");
-    const otherRegistered = await registerEndUser(otherSecret, "other-project-user@example.com");
+    const otherRegistered = await registerAndSignInEndUser(
+      otherSecret,
+      "other-project-user@example.com",
+    );
     const otherSession = await prisma.session.findFirstOrThrow({
       where: { user_id: otherRegistered.body.user.id },
     });

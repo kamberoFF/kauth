@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import {
   api,
+  registerAndSignIn,
   createOwnedProject,
   createTestProject,
   resetDatabase,
@@ -36,6 +37,8 @@ function makeCredentials(prefix: string, password = "a-default-compliant-pass") 
   };
 }
 
+// Raw register (ADR 0008: no session in the response) — the floor checks
+// here assert on register's own status, so this must not chain to login.
 function registerInto(projectId: string, credentials: ReturnType<typeof makeCredentials>) {
   return api("POST", "/register", { body: credentials, projectId });
 }
@@ -75,14 +78,14 @@ describe("the global default floor", () => {
 
     const response = await registerInto(project.id, credentials);
 
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(202);
   });
 
   it("enforces the same floor when changing a password", async () => {
     const project = await createTestProject();
     const credentials = makeCredentials("changer");
 
-    const registered = await registerInto(project.id, credentials);
+    const registered = await registerAndSignIn(credentials, project.id);
 
     const response = await api("POST", "/change-password", {
       accessToken: registered.body.accessToken,
@@ -106,7 +109,7 @@ describe("the per-project override", () => {
 
     const response = await registerInto(project.id, credentials);
 
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(202);
   });
 
   it("still rejects anything below the Project's own floor", async () => {
@@ -189,14 +192,14 @@ describe("POST /projects accepts the password policy", () => {
   it("stores and echoes min_password_length when given", async () => {
     await ensurePlatformProject();
     const suffix = crypto.randomUUID();
-    const registered = await api("POST", "/register", {
-      body: {
+    const registered = await registerAndSignIn(
+      {
         email: `dev-${suffix}@example.com`,
         username: `dev-${suffix.slice(0, 8)}`,
         password: "correct-horse-battery",
       },
-      projectId: PLATFORM_PROJECT_ID,
-    });
+      PLATFORM_PROJECT_ID,
+    );
 
     const created = await api("POST", "/projects", {
       body: { name: "Policy Project", min_password_length: 12 },
@@ -215,14 +218,14 @@ describe("POST /projects accepts the password policy", () => {
   it("leaves the policy unset when omitted", async () => {
     await ensurePlatformProject();
     const suffix = crypto.randomUUID();
-    const registered = await api("POST", "/register", {
-      body: {
+    const registered = await registerAndSignIn(
+      {
         email: `dev-${suffix}@example.com`,
         username: `dev-${suffix.slice(0, 8)}`,
         password: "correct-horse-battery",
       },
-      projectId: PLATFORM_PROJECT_ID,
-    });
+      PLATFORM_PROJECT_ID,
+    );
 
     const created = await api("POST", "/projects", {
       body: { name: "Default Policy Project" },
@@ -236,14 +239,14 @@ describe("POST /projects accepts the password policy", () => {
   it("rejects out-of-bounds values", async () => {
     await ensurePlatformProject();
     const suffix = crypto.randomUUID();
-    const registered = await api("POST", "/register", {
-      body: {
+    const registered = await registerAndSignIn(
+      {
         email: `dev-${suffix}@example.com`,
         username: `dev-${suffix.slice(0, 8)}`,
         password: "correct-horse-battery",
       },
-      projectId: PLATFORM_PROJECT_ID,
-    });
+      PLATFORM_PROJECT_ID,
+    );
 
     for (const min_password_length of [7, 129, 8.5]) {
       const response = await api("POST", "/projects", {
@@ -275,7 +278,7 @@ describe("PATCH /projects/:id", () => {
 
     const twenty = makeCredentials("tight-ok", "twenty-characters-ok!");
     const accepted = await registerInto(project.id, twenty);
-    expect(accepted.status).toBe(201);
+    expect(accepted.status).toBe(202);
 
     // Lowering/tightening a floor is an auth-relevant transition, so it is
     // audited like every other one.

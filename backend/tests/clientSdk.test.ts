@@ -76,19 +76,14 @@ beforeEach(resetDatabase);
 
 describe("client SDK (real HTTP against the test server)", () => {
   describe("signUp", () => {
-    it("creates an end-user session scoped to the key's project", async () => {
+    it("registers the end user without signing them in (ADR 0008)", async () => {
       const { owned, makeClient } = await bootstrap();
       const client = makeClient();
 
-      const user = await client.signUp(END_USER);
+      const result = await client.signUp(END_USER);
 
-      expect(user.email).toBe(END_USER.email);
-      expect(client.getSnapshot()).toEqual({
-        status: "signedIn",
-        user,
-        accessToken: expect.any(String),
-        refreshToken: expect.any(String),
-      });
+      expect(result).toBeUndefined();
+      expect(client.getSnapshot().status).toBe("signedOut");
 
       const row = await prisma.user.findUniqueOrThrow({
         where: {
@@ -97,17 +92,23 @@ describe("client SDK (real HTTP against the test server)", () => {
       });
       expect(row.username).toBe(END_USER.username);
 
-      const session = await prisma.session.findFirstOrThrow({
-        where: { project_id: owned.id },
-      });
-      expect(session.status).toBe("ACTIVE");
+      // No session on the register step.
+      expect(
+        await prisma.session.count({ where: { project_id: owned.id } }),
+      ).toBe(0);
     });
 
-    it("mints an access token the platform itself accepts", async () => {
+    it("a following signIn reaches a session with a platform-accepted token", async () => {
       const { makeClient } = await bootstrap();
       const client = makeClient();
 
       await client.signUp(END_USER);
+      await client.signIn({
+        email: END_USER.email,
+        password: END_USER.password,
+      });
+
+      expect(client.getSnapshot().status).toBe("signedIn");
       const { accessToken } = client.getSnapshot() as {
         status: "signedIn";
         accessToken: string;
@@ -117,30 +118,54 @@ describe("client SDK (real HTTP against the test server)", () => {
       expect(response.status).toBe(200);
     });
 
-    it("surfaces the platform's duplicate_email code directly", async () => {
+    it("resolves a duplicate-email signUp instead of throwing an oracle", async () => {
+      const { owned, makeClient } = await bootstrap();
+      const client = makeClient();
+      await client.signUp(END_USER);
+
+      // The server no longer returns duplicate_email (ADR 0008), so the SDK
+      // cannot surface it: a second signUp on that address — under a fresh
+      // username, so only the email collides — just resolves.
+      await expect(
+        client.signUp({ ...END_USER, username: "someone-else" }),
+      ).resolves.toBeUndefined();
+      expect(client.getSnapshot().status).toBe("signedOut");
+
+      expect(
+        await prisma.user.count({
+          where: { project_id: owned.id, email: END_USER.email },
+        }),
+      ).toBe(1);
+    });
+
+    it("still throws duplicate_username", async () => {
       const { makeClient } = await bootstrap();
       const client = makeClient();
       await client.signUp(END_USER);
 
       let error: unknown;
       try {
-        await client.signUp(END_USER);
+        await client.signUp({ ...END_USER, email: "someone-else@example.com" });
       } catch (caught) {
         error = caught;
       }
 
-      expect((error as { code?: string }).code).toBe("duplicate_email");
+      expect((error as { code?: string }).code).toBe("duplicate_username");
       expect((error as Error).name).toBe("KauthError");
     });
   });
 
   describe("device identity (server-issued, captured and echoed)", () => {
-    it("signs up with no device header, captures the minted id, and echoes it on sign-out", async () => {
+    it("captures the server-issued device id at sign-in and echoes it on sign-out", async () => {
       const { owned, publishableKey } = await bootstrap();
       // No initial deviceId: the server must mint one.
       const client = createKauthClient({ baseUrl, publishableKey });
 
       await client.signUp(END_USER);
+      await client.signIn({
+        email: END_USER.email,
+        password: END_USER.password,
+      });
       const session = await prisma.session.findFirstOrThrow({
         where: { project_id: owned.id },
       });
@@ -156,6 +181,10 @@ describe("client SDK (real HTTP against the test server)", () => {
       const { owned, makeClient } = await bootstrap();
       const registered = makeClient();
       await registered.signUp(END_USER);
+      await registered.signIn({
+        email: END_USER.email,
+        password: END_USER.password,
+      });
 
       const RETURNING_DEVICE = RETURNING_DEVICE_ID;
       const returning = makeClient({ deviceId: RETURNING_DEVICE });
@@ -279,12 +308,13 @@ describe("client SDK (real HTTP against the test server)", () => {
       };
     }
 
-    /** One fresh project whose end user signed up through the SDK and
-     * finished TOTP enrollment with the session the SDK holds. */
+    /** One fresh project whose end user signed up and signed in through the
+     * SDK, then finished TOTP enrollment with the session the SDK holds. */
     async function enrolledScenario() {
       const { owned, makeClient } = await bootstrap();
       const client = makeClient();
       await client.signUp(END_USER);
+      await client.signIn({ email: END_USER.email, password: END_USER.password });
       const enrolled = await enrollUser(client);
 
       return { owned, makeClient, enrolled };
@@ -319,6 +349,7 @@ describe("client SDK (real HTTP against the test server)", () => {
       const { owned, makeClient } = await bootstrap();
       const client = makeClient();
       await client.signUp(END_USER);
+      await client.signIn({ email: END_USER.email, password: END_USER.password });
       await enrollUser(client);
 
       const returning = makeClient({
@@ -464,6 +495,7 @@ describe("client SDK (real HTTP against the test server)", () => {
       const { owned, makeClient } = await bootstrap();
       const client = makeClient();
       await client.signUp(END_USER);
+      await client.signIn({ email: END_USER.email, password: END_USER.password });
 
       const { accessToken } = client.getSnapshot() as {
         status: "signedIn";
@@ -501,8 +533,10 @@ describe("client SDK (real HTTP against the test server)", () => {
       });
 
       await client.signUp(END_USER);
+      await client.signIn({ email: END_USER.email, password: END_USER.password });
       await client.signOut();
 
+      // signUp does not transition (ADR 0008); only signIn and signOut do.
       expect(seen).toEqual(["signedIn", "signedOut"]);
       unsubscribe();
     });
@@ -517,6 +551,7 @@ describe("client SDK (real HTTP against the test server)", () => {
       unsubscribe();
 
       await client.signUp(END_USER);
+      await client.signIn({ email: END_USER.email, password: END_USER.password });
 
       expect(calls).toBe(0);
     });
@@ -542,13 +577,17 @@ describe("client SDK (real HTTP against the test server)", () => {
       const client = makeClient();
 
       // Same client instance across renders — the second render must read the
-      // store's post-transition snapshot, not a stale one.
+      // store's post-transition snapshot, not a stale one. signUp does not
+      // transition (ADR 0008); signIn does, with a null user until a /me.
       const before = probe(client);
       await client.signUp(END_USER);
-      const after = probe(client);
+      const afterSignUp = probe(client);
+      await client.signIn({ email: END_USER.email, password: END_USER.password });
+      const afterSignIn = probe(client);
 
       expect(before).toBe("out:-");
-      expect(after).toBe(`in:${END_USER.email}`);
+      expect(afterSignUp).toBe("out:-");
+      expect(afterSignIn).toBe("in:-");
     });
 
     it("exposes no user profile when the session came from signIn", async () => {
@@ -606,6 +645,7 @@ describe("client SDK (real HTTP against the test server)", () => {
         .catch(() => undefined);
 
       await client.signUp(END_USER);
+      await client.signIn({ email: END_USER.email, password: END_USER.password });
       expect(client.getSnapshot().status).toBe("signedIn");
     });
 

@@ -17,7 +17,7 @@ import {
 import { CREDENTIAL_PROVIDER } from "../constants/providers";
 import config from "../config";
 import { MFA_CHALLENGE_TTL_SECONDS, issueRecoveryToken } from "../lib/recoveryTokens";
-import { sendMail, verificationEmail } from "../lib/mail";
+import { existingAccountEmail, sendMail, verificationEmail } from "../lib/mail";
 import {
   clientContext,
   createSession,
@@ -33,6 +33,7 @@ import {
 } from "../lib/passwords";
 import {
   recordSecurityEvent,
+  requestContext,
   tryRecordSecurityEvent,
 } from "../lib/securityEvents";
 import { stampMfaGrace } from "../lib/mfaPolicy";
@@ -51,17 +52,19 @@ export const register: RequestHandler = async (req, res, next) => {
 
     const { email, username, password, first_name, last_name } = parsed.data;
     const projectId = requireProjectId(req);
-    const context = clientContext(req, requireDeviceId(req), projectId);
+    // No device resolution here (ADR 0008): register creates no session, so
+    // there is nothing to bind a device to. Event attribution comes straight
+    // from the request.
+    const { ip, userAgent } = requestContext(req);
 
     // The floor is per-Project policy, resolved here where the Project is
-    // known — the schema only validates shape (see lib/validation.ts).
+    // known — the schema only validates shape (see lib/validation.ts). Stays
+    // ahead of any uniqueness lookup so the password rule never depends on
+    // whether the account exists.
     if (password.length < (await projectPasswordFloor(projectId))) {
       return next(appError(400, "Password too short", "password_too_short"));
     }
 
-    // Both columns are unique per project, so an unchecked username collision
-    // would surface as an unhandled P2002 rather than a 409. The error handler
-    // still maps the race, but the common case deserves a specific code.
     const [existingEmail, existingUsername] = await Promise.all([
       prisma.user.findUnique({
         where: { project_id_email: { project_id: projectId, email } },
@@ -73,87 +76,85 @@ export const register: RequestHandler = async (req, res, next) => {
       }),
     ]);
 
-    if (existingEmail)
-      return next(appError(409, "User already exists", "duplicate_email"));
-
+    // Usernames are user-chosen public handles — a collision discloses nothing
+    // about anyone's email — so this stays a specific 409, and it is returned
+    // before any email handling: a request colliding on both gets this.
     if (existingUsername)
       return next(appError(409, "Username is taken", "duplicate_username"));
 
+    // Hashed unconditionally from here: both branches below must pay exactly
+    // one Argon2id hash so response timing cannot separate a fresh email from
+    // one that already has an account. The duplicate branch discards the
+    // result on purpose — do not optimise it away.
     const passwordHash = await hashPassword(password);
 
-    const result = await prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: { project_id: projectId, email, username, first_name, last_name },
+    if (existingEmail) {
+      // Create nothing, issue no token, never emit EMAIL_CONFIRMATION_SENT —
+      // that event would itself become the oracle the response no longer is.
+      // This server-side-only event is where a repeat attempt stays visible.
+      await tryRecordSecurityEvent({
+        type: "REGISTER_DUPLICATE_EMAIL",
+        userId: existingEmail.id,
+        projectId,
+        ip,
+        userAgent,
       });
 
-      await tx.account.create({
-        data: {
-          user_id: user.id,
-          project_id: projectId,
-          provider_id: CREDENTIAL_PROVIDER,
-          account_id: user.id,
-          password: passwordHash,
-        },
+      await sendMail(existingAccountEmail(email));
+    } else {
+      const user = await prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: { project_id: projectId, email, username, first_name, last_name },
+        });
+
+        await tx.account.create({
+          data: {
+            user_id: created.id,
+            project_id: projectId,
+            provider_id: CREDENTIAL_PROVIDER,
+            account_id: created.id,
+            password: passwordHash,
+          },
+        });
+
+        await recordSecurityEvent(
+          {
+            type: "USER_REGISTERED",
+            userId: created.id,
+            sessionId: null,
+            projectId,
+            ip,
+            userAgent,
+            metadata: { provider: CREDENTIAL_PROVIDER },
+          },
+          tx,
+        );
+
+        return created;
       });
 
-      const created = await createSession(tx, user.id, projectId, context, user.role);
-
-      await recordSecurityEvent(
-        {
-          type: "USER_REGISTERED",
-          userId: user.id,
-          sessionId: created.session.id,
-          projectId,
-          ip: context.ip,
-          userAgent: context.userAgent,
-          metadata: { provider: CREDENTIAL_PROVIDER },
-        },
-        tx,
+      const verificationToken = await issueRecoveryToken(
+        user.id,
+        "EMAIL_CONFIRMATION",
+        projectId,
       );
 
-      const mfaGraceEndsAt = await stampMfaGrace(tx, user, projectId);
+      await sendMail(verificationEmail(user.email, verificationToken));
+      await tryRecordSecurityEvent({
+        type: "EMAIL_CONFIRMATION_SENT",
+        userId: user.id,
+        projectId,
+        ip,
+        userAgent,
+      });
+    }
 
-      return { user, ...created, mfaGraceEndsAt };
+    // Byte-identical on both branches: same status, same body, no tokens, no
+    // session, no user, no device id, no MFA grace field. Clients call /login
+    // next; MFA grace is stamped there.
+    res.status(202).json({
+      message: "If that address is valid, we've sent a confirmation email.",
     });
-
-    const verificationToken = await issueRecoveryToken(
-      result.user.id,
-      "EMAIL_CONFIRMATION",
-      projectId,
-    );
-
-    await sendMail(verificationEmail(result.user.email, verificationToken));
-    await tryRecordSecurityEvent({
-      type: "EMAIL_CONFIRMATION_SENT",
-      userId: result.user.id,
-      projectId,
-      ip: context.ip,
-      userAgent: context.userAgent,
-    });
-
-    sendAuthResponse(
-      req,
-      res,
-      {
-        accessToken: result.accessToken.token,
-        refreshToken: result.refreshToken.token,
-      },
-      {
-        user: {
-          id: result.user.id,
-          username: result.user.username,
-          email: result.user.email,
-          emailVerified: result.user.email_verified,
-          firstName: result.user.first_name,
-          lastName: result.user.last_name,
-        },
-        ...(result.mfaGraceEndsAt && {
-          mfaGraceEndsAt: result.mfaGraceEndsAt.toISOString(),
-        }),
-      },
-      201,
-      context.deviceId,
-    );
   } catch (error) {
     next(error);
   }

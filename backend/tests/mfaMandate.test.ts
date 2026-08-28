@@ -6,6 +6,7 @@ import {
   api,
   createOwnedProject,
   createTestProject,
+  registerAndSignIn,
   resetDatabase,
   startTestServer,
   stopTestServer,
@@ -236,54 +237,65 @@ describe("PATCH /projects/:id mandate settings", () => {
 });
 
 describe("grace stamping at sign-in", () => {
-  it("stamps a fresh registration with the default window and surfaces the deadline", async () => {
+  // Register no longer stamps grace or returns a session (ADR 0008) — the
+  // window is stamped at /login and surfaced there.
+  it("stamps the default window at sign-in and surfaces the deadline", async () => {
     await mandateProject();
 
-    const response = await api("POST", "/register", {
-      body: {
-        email: "stamped@example.com",
-        username: "stamped",
-        password: "correct-horse-battery",
-      },
+    const credentials = {
+      email: "stamped@example.com",
+      username: "stamped",
+      password: "correct-horse-battery",
+    };
+    await api("POST", "/register", { body: credentials, projectId: project.id });
+
+    const signedIn = await api("POST", "/login", {
+      body: { email: credentials.email, password: credentials.password },
       projectId: project.id,
     });
 
-    expect(response.status).toBe(201);
-    expectDeadlineNear(response.body.mfaGraceEndsAt, MFA_GRACE_DAYS_DEFAULT);
+    expect(signedIn.status).toBe(200);
+    expectDeadlineNear(signedIn.body.mfaGraceEndsAt, MFA_GRACE_DAYS_DEFAULT);
 
     const user = await getUserByEmail("stamped@example.com");
     expect(user.mfa_grace_ends_at!.getTime()).toBe(
-      new Date(response.body.mfaGraceEndsAt).getTime(),
+      new Date(signedIn.body.mfaGraceEndsAt).getTime(),
     );
   });
 
-  it("honors a project-configured window length", async () => {
+  it("honors a project-configured window length at sign-in", async () => {
     await mandateProject({ mfa_grace_days: 30 });
 
-    const response = await api("POST", "/register", {
-      body: {
-        email: "thirty@example.com",
-        username: "thirty",
-        password: "correct-horse-battery",
-      },
+    const credentials = {
+      email: "thirty@example.com",
+      username: "thirty",
+      password: "correct-horse-battery",
+    };
+    await api("POST", "/register", { body: credentials, projectId: project.id });
+
+    const signedIn = await api("POST", "/login", {
+      body: { email: credentials.email, password: credentials.password },
       projectId: project.id,
     });
 
-    expectDeadlineNear(response.body.mfaGraceEndsAt, 30);
+    expectDeadlineNear(signedIn.body.mfaGraceEndsAt, 30);
   });
 
   it("leaves no stamp and no response field without a mandate", async () => {
-    const response = await api("POST", "/register", {
-      body: {
-        email: "unmandated@example.com",
-        username: "unmandated",
-        password: "correct-horse-battery",
-      },
+    const credentials = {
+      email: "unmandated@example.com",
+      username: "unmandated",
+      password: "correct-horse-battery",
+    };
+    await api("POST", "/register", { body: credentials, projectId: project.id });
+
+    const signedIn = await api("POST", "/login", {
+      body: { email: credentials.email, password: credentials.password },
       projectId: project.id,
     });
 
-    expect(response.status).toBe(201);
-    expect(response.body.mfaGraceEndsAt).toBeUndefined();
+    expect(signedIn.status).toBe(200);
+    expect(signedIn.body.mfaGraceEndsAt).toBeUndefined();
 
     const user = await getUserByEmail("unmandated@example.com");
     expect(user.mfa_grace_ends_at).toBeNull();
@@ -330,10 +342,7 @@ describe("grace stamping at sign-in", () => {
       username: "enrolled",
       password: "correct-horse-battery",
     };
-    const registered = await api("POST", "/register", {
-      body: credentials,
-      projectId: project.id,
-    });
+    const registered = await registerAndSignIn(credentials, project.id);
 
     const started = await api("POST", "/mfa/enrollment", {
       accessToken: registered.body.accessToken,
@@ -401,14 +410,12 @@ describe("the requireAuth wall", () => {
   };
 
   async function registerWalled() {
-    const registered = await api("POST", "/register", {
-      body: credentials,
-      projectId: project.id,
-    });
+    // register→login (ADR 0008); the mandate's grace is stamped at sign-in.
+    const signedIn = await registerAndSignIn(credentials, project.id);
 
-    expect(registered.status).toBe(201);
+    expect(signedIn.status).toBe(200);
 
-    return registered.body.accessToken as string;
+    return signedIn.body.accessToken as string;
   }
 
   /** Registers under an active mandate, then fast-forwards the user's window

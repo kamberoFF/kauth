@@ -70,8 +70,8 @@ different registrable domain would need `SameSite=None; Secure`.
 
 | Method | Path | Notes |
 | ------ | ---- | ----- |
-| POST | `/register` | Requires `X-Device-Id`. Sends a confirmation email. |
-| POST | `/login` | Requires `X-Device-Id`. |
+| POST | `/register` | Always `202` with no session (ADR 0008). Sends a confirmation email; a duplicate email is indistinguishable from a fresh signup. No device is established — call `/login` next. |
+| POST | `/login` | Requires `X-Device-Id`. Establishes device identity and the session. |
 | POST | `/refresh` | Rotates the refresh token; replaying one revokes the family. |
 | POST | `/logout` | Revokes the session for this device. |
 

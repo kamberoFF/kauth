@@ -4,4 +4,4 @@
  * including purely additive ones — the SDK hard-fails against a server
  * advertising anything else.
  */
-export const CONTRACT_VERSION = "0.5.0";
+export const CONTRACT_VERSION = "0.6.0";

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 import {
   api,
   createTestProject,
+  registerAndSignIn,
   resetDatabase,
   startTestServer,
   stopTestServer,
@@ -44,7 +45,8 @@ describe("security event log", () => {
 
     expect(registered.severity).toBe("INFO");
     expect(registered.user_id).not.toBeNull();
-    expect(registered.session_id).not.toBeNull();
+    // Register creates no session any more (ADR 0008).
+    expect(registered.session_id).toBeNull();
   });
 
   it("records a failed login against a known account", async () => {
@@ -78,10 +80,7 @@ describe("security event log", () => {
   });
 
   it("records reuse detection at CRITICAL severity", async () => {
-    const registered = await api("POST", "/register", {
-      body: credentials,
-      projectId: project.id,
-    });
+    const registered = await registerAndSignIn(credentials, project.id);
     const first = registered.body.refreshToken as string;
 
     await api("POST", "/refresh", { body: { refreshToken: first } });
@@ -96,10 +95,7 @@ describe("security event log", () => {
   });
 
   it("records a logout and keeps the revoked session referenced", async () => {
-    const registered = await api("POST", "/register", {
-      body: credentials,
-      projectId: project.id,
-    });
+    const registered = await registerAndSignIn(credentials, project.id);
 
     await api("POST", "/logout", {
       accessToken: registered.body.accessToken,
@@ -120,10 +116,7 @@ describe("security event log", () => {
 
   it("records a self-service session revocation", async () => {
     const OTHER_DEVICE_ID = "9f8e7d6c-5b4a-4392-8172-6f5e4d3c2b1a";
-    const registered = await api("POST", "/register", {
-      body: credentials,
-      projectId: project.id,
-    });
+    const registered = await registerAndSignIn(credentials, project.id);
     await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },
       deviceId: OTHER_DEVICE_ID,
@@ -147,10 +140,7 @@ describe("security event log", () => {
   });
 
   it("records an account unlink", async () => {
-    const registered = await api("POST", "/register", {
-      body: credentials,
-      projectId: project.id,
-    });
+    const registered = await registerAndSignIn(credentials, project.id);
     const user = await prisma.user.findUniqueOrThrow({
       where: { project_id_email: { project_id: project.id, email: credentials.email } },
     });

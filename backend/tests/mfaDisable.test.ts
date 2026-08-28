@@ -3,6 +3,7 @@ import { decodeBase32 } from "@oslojs/encoding";
 import { generateHOTP } from "@oslojs/otp";
 import {
   api,
+  registerAndSignIn,
   createTestProject,
   resetDatabase,
   startTestServer,
@@ -54,14 +55,12 @@ async function getUser(user: TestUser) {
 }
 
 async function registerUser(user: TestUser) {
-  const registered = await api("POST", "/register", {
-    body: user,
-    projectId: project.id,
-  });
+  // Register→login (ADR 0008): register no longer signs the user in.
+  const signedIn = await registerAndSignIn(user, project.id);
 
-  expect(registered.status).toBe(201);
+  expect(signedIn.status).toBe(200);
 
-  return registered.body.accessToken as string;
+  return signedIn.body.accessToken as string;
 }
 
 /** Registers and walks the full enrollment so tests start from an enrolled

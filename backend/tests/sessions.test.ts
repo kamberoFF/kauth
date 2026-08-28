@@ -3,6 +3,7 @@ import {
   api,
   cookieClient,
   createTestProject,
+  registerAndSignIn,
   resetDatabase,
   startTestServer,
   stopTestServer,
@@ -19,11 +20,10 @@ const credentials = {
 
 let project: Awaited<ReturnType<typeof createTestProject>>;
 
+// Register no longer signs the user in (ADR 0008); this does register→login
+// and returns the sign-in response with a synthesized `user`.
 function registerUser(overrides: Record<string, unknown> = {}) {
-  return api("POST", "/register", {
-    body: { ...credentials, ...overrides },
-    projectId: project.id,
-  });
+  return registerAndSignIn({ ...credentials, ...overrides }, project.id);
 }
 
 function listSessions(accessToken: string) {
@@ -95,7 +95,7 @@ describe("GET /sessions", () => {
   it("never leaks another project's sessions for the same email", async () => {
     const otherProject = await createTestProject({ name: "Other Project" });
     const registered = await registerUser();
-    await api("POST", "/register", { body: credentials, projectId: otherProject.id });
+    await registerAndSignIn(credentials, otherProject.id);
 
     const response = await listSessions(registered.body.accessToken);
 
@@ -110,10 +110,10 @@ describe("GET /sessions", () => {
    */
   it("never leaks another user's session within the same project", async () => {
     const registered = await registerUser();
-    await api("POST", "/register", {
-      body: { email: "other@example.com", username: "other", password: credentials.password },
-      projectId: project.id,
-    });
+    await registerAndSignIn(
+      { email: "other@example.com", username: "other", password: credentials.password },
+      project.id,
+    );
 
     const response = await listSessions(registered.body.accessToken);
 
@@ -191,8 +191,8 @@ describe("DELETE /sessions/:sessionId", () => {
   it("clears the caller's cookies when revoking their own current session", async () => {
     const client = cookieClient();
     const csrfToken = await client.primeCsrf();
-    // Registration through the jar so the login echoes the same kauth_device
-    // cookie and replaces — rather than sits beside — the registration session.
+    // Register then sign in through the jar (ADR 0008: register creates no
+    // session); the sign-in mints the device cookie and the only session.
     await client.request("POST", "/register", {
       csrfToken,
       body: credentials,
@@ -266,10 +266,10 @@ describe("DELETE /sessions/:sessionId", () => {
    */
   it("cannot revoke another user's session, even in the same project", async () => {
     const victim = await registerUser();
-    const intruder = await api("POST", "/register", {
-      body: { email: "intruder@example.com", username: "intruder", password: credentials.password },
-      projectId: project.id,
-    });
+    const intruder = await registerAndSignIn(
+      { email: "intruder@example.com", username: "intruder", password: credentials.password },
+      project.id,
+    );
 
     const victimSession = await prisma.session.findFirstOrThrow({
       where: { user_id: victim.body.user.id },
@@ -287,10 +287,7 @@ describe("DELETE /sessions/:sessionId", () => {
   it("cannot reach a session belonging to another project, even for the same email", async () => {
     const otherProject = await createTestProject({ name: "Other Project" });
     await registerUser();
-    const otherProjectUser = await api("POST", "/register", {
-      body: credentials,
-      projectId: otherProject.id,
-    });
+    const otherProjectUser = await registerAndSignIn(credentials, otherProject.id);
 
     const otherProjectSession = await prisma.session.findFirstOrThrow({
       where: { project_id: otherProject.id },
@@ -312,7 +309,7 @@ describe("DELETE /sessions/:sessionId", () => {
     const row = await prisma.session.findUniqueOrThrow({ where: { id: otherProjectSession.id } });
     expect(row.status).toBe("ACTIVE");
 
-    // otherProjectUser is unused beyond registering the second project's account.
-    expect(otherProjectUser.status).toBe(201);
+    // otherProjectUser is unused beyond seeding the second project's account.
+    expect(otherProjectUser.status).toBe(200);
   });
 });

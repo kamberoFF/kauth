@@ -100,6 +100,22 @@ export const registerLimiter = limiter({
   keyGenerator: byIp,
 });
 
+/**
+ * Register sends email too — a confirmation link on a fresh address, a
+ * "someone tried to sign up" notice on one that already exists (ADR 0008) —
+ * so it gets the same per-account mailbomb guard as the recovery endpoints,
+ * keyed on project + email and sitting behind the by-IP `registerLimiter`.
+ * No `skipSuccessfulRequests`: a successful attempt is exactly the one that
+ * sends mail. The 429 shape is identical whether or not the email exists
+ * (this runs before the controller), so it is not an oracle.
+ */
+export const registerAccountLimiter = limiter({
+  windowMs: 60 * MINUTE,
+  limit: 5,
+  storePrefix: "register-account",
+  keyGenerator: byAccount,
+});
+
 export const refreshLimiter = limiter({
   windowMs: 15 * MINUTE,
   limit: 60,

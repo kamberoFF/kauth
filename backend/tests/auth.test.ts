@@ -4,6 +4,7 @@ import {
   api,
   cookieClient,
   createTestProject,
+  registerAndSignIn,
   resetDatabase,
   startTestServer,
   stopTestServer,
@@ -13,6 +14,10 @@ import { prisma } from "../lib/prisma";
 import { generateTokens } from "../lib/jwt";
 import { INACTIVITY_WINDOW_MS, SESSION_TTL_MS } from "../lib/sessions";
 import { UUID_REGEX } from "../constants/regex";
+import { createMemoryMailer, setMailer } from "../lib/mail";
+
+const GENERIC_REGISTER_MESSAGE =
+  "If that address is valid, we've sent a confirmation email.";
 
 const OTHER_DEVICE_ID = "9f8e7d6c-5b4a-4392-8172-6f5e4d3c2b1a";
 
@@ -24,32 +29,88 @@ const credentials = {
 
 let project: Awaited<ReturnType<typeof createTestProject>>;
 
+const mailer = createMemoryMailer();
+
+/**
+ * Register no longer signs the user in (ADR 0008), but almost every test here
+ * just wants a logged-in user — so this does the register→login dance and
+ * hands back the sign-in response with a synthesized `user` object.
+ */
 function registerUser(overrides: Record<string, unknown> = {}) {
-  return api("POST", "/register", {
-    body: { ...credentials, ...overrides },
-    projectId: project.id,
-  });
+  return registerAndSignIn({ ...credentials, ...overrides }, project.id);
 }
 
-beforeAll(startTestServer);
-afterAll(stopTestServer);
+beforeAll(async () => {
+  setMailer(mailer);
+  await startTestServer();
+});
+afterAll(async () => {
+  setMailer(createMemoryMailer());
+  await stopTestServer();
+});
 beforeEach(resetDatabase);
 beforeEach(async () => {
+  mailer.clear();
   project = await createTestProject();
 });
 
 describe("POST /register", () => {
-  it("creates a user and issues a token pair", async () => {
-    const response = await registerUser();
+  /**
+   * Register is now a fire-and-forget request (ADR 0008): every well-formed
+   * call that clears the username check and the password floor returns the
+   * same generic 202, so an unauthenticated caller cannot tell from the
+   * response whether an email already has an account.
+   */
+  it("returns a generic 202 with no session, tokens, user, or device", async () => {
+    const response = await api("POST", "/register", {
+      body: credentials,
+      projectId: project.id,
+    });
 
-    expect(response.status).toBe(201);
-    expect(response.body.user.email).toBe(credentials.email);
-    expect(response.body.accessToken).toBeString();
-    expect(response.body.refreshToken).toMatch(/^[\w-]+\.[\w-]+$/);
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({ message: GENERIC_REGISTER_MESSAGE });
+    for (const key of [
+      "accessToken",
+      "refreshToken",
+      "user",
+      "deviceId",
+      "mfaGraceEndsAt",
+    ]) {
+      expect(response.body).not.toHaveProperty(key);
+    }
+
+    const user = await prisma.user.findUniqueOrThrow({
+      where: {
+        project_id_email: { project_id: project.id, email: credentials.email },
+      },
+      include: { accounts: true },
+    });
+    expect(user.email_verified).toBe(false);
+    expect(user.accounts).toHaveLength(1);
+    expect(user.accounts[0]!.provider_id).toBe("credential");
+
+    // No session on the happy path any more — the client signs in next.
+    expect(
+      await prisma.session.count({ where: { user_id: user.id } }),
+    ).toBe(0);
+
+    const registered = await prisma.securityEvent.findFirstOrThrow({
+      where: { event_type: "USER_REGISTERED", user_id: user.id },
+    });
+    expect(registered.session_id).toBeNull();
+
+    expect(
+      await prisma.securityEvent.count({
+        where: { event_type: "EMAIL_CONFIRMATION_SENT", user_id: user.id },
+      }),
+    ).toBe(1);
+    expect(mailer.lastTo(credentials.email)?.subject).toBe(
+      "Confirm your email address",
+    );
   });
 
   it("stores the password hash on a credential account, not on the user", async () => {
-    await registerUser();
+    await api("POST", "/register", { body: credentials, projectId: project.id });
 
     const user = await prisma.user.findUniqueOrThrow({
       where: {
@@ -67,30 +128,107 @@ describe("POST /register", () => {
     expect(credential.password?.startsWith("$argon2id$")).toBe(true);
   });
 
-  it("starts the account unverified", async () => {
-    const response = await registerUser();
+  it("answers a duplicate email byte-identically to a fresh one", async () => {
+    // A genuinely new address.
+    const fresh = await api("POST", "/register", {
+      body: {
+        email: "fresh@example.com",
+        username: "fresh",
+        password: credentials.password,
+      },
+      projectId: project.id,
+    });
 
-    expect(response.body.user.emailVerified).toBe(false);
+    // Register alice, then register alice again under a different username:
+    // the second call is the duplicate-email branch.
+    await api("POST", "/register", { body: credentials, projectId: project.id });
+    mailer.clear();
+
+    const confirmationEvents = () =>
+      prisma.securityEvent.count({
+        where: { event_type: "EMAIL_CONFIRMATION_SENT" },
+      });
+    const confirmationTokens = () =>
+      prisma.recoveryToken.count({
+        where: { token_type: "EMAIL_CONFIRMATION" },
+      });
+    const eventsBefore = await confirmationEvents();
+    const tokensBefore = await confirmationTokens();
+
+    const duplicate = await api("POST", "/register", {
+      body: { ...credentials, username: "someone-else" },
+      projectId: project.id,
+    });
+
+    expect(duplicate.status).toBe(fresh.status);
+    expect(duplicate.body).toEqual(fresh.body);
+
+    const transient = new Set([
+      "date",
+      "etag",
+      "ratelimit",
+      "ratelimit-policy",
+      "ratelimit-limit",
+      "ratelimit-remaining",
+      "ratelimit-reset",
+      "retry-after",
+    ]);
+    const stableNames = (headers: Headers) =>
+      [...headers.keys()].filter((key) => !transient.has(key)).sort();
+    expect(stableNames(duplicate.headers)).toEqual(stableNames(fresh.headers));
+
+    // The duplicate branch created nothing: no second user, and no new
+    // confirmation event or recovery token beyond alice's first registration.
+    const existing = await prisma.user.findUniqueOrThrow({
+      where: {
+        project_id_email: { project_id: project.id, email: credentials.email },
+      },
+    });
+    expect(
+      await prisma.user.count({
+        where: { project_id: project.id, email: credentials.email },
+      }),
+    ).toBe(1);
+    expect(await confirmationEvents()).toBe(eventsBefore);
+    expect(await confirmationTokens()).toBe(tokensBefore);
+
+    const duplicateEvent = await prisma.securityEvent.findFirstOrThrow({
+      where: { event_type: "REGISTER_DUPLICATE_EMAIL" },
+    });
+    expect(duplicateEvent.severity).toBe("WARNING");
+    expect(duplicateEvent.user_id).toBe(existing.id);
+
+    const notice = mailer.lastTo(credentials.email);
+    expect(notice?.subject).toBe("Someone tried to sign up with your email");
+    expect(notice?.text).not.toContain("someone-else");
+    expect(notice?.text.toLowerCase()).not.toContain("token");
   });
 
-  it("rejects a duplicate email", async () => {
-    await registerUser();
-    const response = await registerUser({ username: "someone-else" });
+  it("checks the username collision first, and only that is a 409", async () => {
+    await api("POST", "/register", { body: credentials, projectId: project.id });
 
-    expect(response.status).toBe(409);
-    expect(response.body.error.code).toBe("duplicate_email");
-  });
+    // Same username, brand-new email — colliding on both would still land here.
+    const usernameTaken = await api("POST", "/register", {
+      body: { ...credentials, email: "bob@example.com" },
+      projectId: project.id,
+    });
+    expect(usernameTaken.status).toBe(409);
+    expect(usernameTaken.body.error.code).toBe("duplicate_username");
 
-  it("rejects a duplicate username without a 500", async () => {
-    await registerUser();
-    const response = await registerUser({ email: "other@example.com" });
-
-    expect(response.status).toBe(409);
-    expect(response.body.error.code).toBe("duplicate_username");
+    // New username, existing email — the generic 202, no oracle.
+    const emailTaken = await api("POST", "/register", {
+      body: { ...credentials, username: "carol" },
+      projectId: project.id,
+    });
+    expect(emailTaken.status).toBe(202);
+    expect(emailTaken.body).toEqual({ message: GENERIC_REGISTER_MESSAGE });
   });
 
   it("rejects invalid input with the shared error contract", async () => {
-    const response = await registerUser({ email: "not-an-email" });
+    const response = await api("POST", "/register", {
+      body: { ...credentials, email: "not-an-email" },
+      projectId: project.id,
+    });
 
     expect(response.status).toBe(400);
     expect(response.body.error).toEqual({
@@ -99,44 +237,81 @@ describe("POST /register", () => {
     });
   });
 
-  it("mints a device id when the client supplies none", async () => {
-    const response = await api("POST", "/register", {
+  it("fast-fails a short password before the email lookup, fresh or existing", async () => {
+    await api("POST", "/register", { body: credentials, projectId: project.id });
+
+    const existingEmail = await api("POST", "/register", {
+      body: { ...credentials, username: "shorty", password: "short" },
+      projectId: project.id,
+    });
+    const freshEmail = await api("POST", "/register", {
+      body: { email: "new@example.com", username: "newbie", password: "short" },
+      projectId: project.id,
+    });
+
+    for (const response of [existingEmail, freshEmail]) {
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("password_too_short");
+    }
+  });
+
+  it("no longer establishes a device — succeeds with no or a malformed header", async () => {
+    const noHeader = await api("POST", "/register", {
       body: credentials,
       projectId: project.id,
       deviceId: null,
     });
+    expect(noHeader.status).toBe(202);
+    expect(
+      noHeader.headers.getSetCookie().some((c) => c.startsWith("kauth_device=")),
+    ).toBe(false);
 
-    expect(response.status).toBe(201);
-    const minted = response.body.deviceId as string;
-    expect(minted).toMatch(UUID_REGEX);
-
-    const session = await prisma.session.findFirstOrThrow({
-      where: { user_id: response.body.user.id },
-    });
-    expect(session.device_id).toBe(minted);
-  });
-
-  it("hands the device id to cookie clients via kauth_device", async () => {
-    const client = cookieClient();
-
-    const response = await client.request("POST", "/register", {
-      body: credentials,
-      projectId: project.id,
-      deviceId: null,
-    });
-
-    expect(response.status).toBe(201);
-    expect(client.get("kauth_device")).toBe(response.body.deviceId);
-  });
-
-  it("still rejects a malformed device header on register", async () => {
     const malformed = await api("POST", "/register", {
-      body: credentials,
+      body: { ...credentials, email: "malformed-device@example.com", username: "mdev" },
       projectId: project.id,
       deviceId: "not-a-uuid",
     });
-    expect(malformed.status).toBe(400);
-    expect(malformed.body.error.code).toBe("device_id_invalid");
+    expect(malformed.status).toBe(202);
+  });
+
+  it("spends comparable time on a duplicate email as on a fresh one", async () => {
+    // Both branches pay exactly one Argon2id hash and do one mail round-trip;
+    // if the duplicate branch skipped the hash it would return far faster.
+    // Relative threshold, mirroring the login timing test below.
+    async function timedRegister(body: Record<string, unknown>) {
+      const start = performance.now();
+      await api("POST", "/register", { body, projectId: project.id });
+      return performance.now() - start;
+    }
+
+    await api("POST", "/register", { body: credentials, projectId: project.id });
+
+    await timedRegister({
+      email: "warm@example.com",
+      username: "warm",
+      password: credentials.password,
+    });
+    await timedRegister({ ...credentials, username: "dup-warm" });
+
+    const fresh: number[] = [];
+    const duplicate: number[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      fresh.push(
+        await timedRegister({
+          email: `fresh-${i}@example.com`,
+          username: `fresh-${i}`,
+          password: credentials.password,
+        }),
+      );
+      duplicate.push(
+        await timedRegister({ ...credentials, username: `dup-${i}` }),
+      );
+    }
+
+    const median = (samples: number[]) =>
+      samples.sort((a, b) => a - b)[Math.floor(samples.length / 2)]!;
+
+    expect(median(duplicate)).toBeGreaterThanOrEqual(0.5 * median(fresh));
   });
 
   it("requires a well-formed project header", async () => {
@@ -179,7 +354,7 @@ describe("POST /login", () => {
   });
 
   it("mints a fresh device id for a client that lost its old one, leaving other devices' sessions alone", async () => {
-    // beforeEach already registered the user on TEST_DEVICE_ID.
+    // beforeEach already signed the user in on TEST_DEVICE_ID.
     const response = await api("POST", "/login", {
       body: { email: credentials.email, password: credentials.password },
       projectId: project.id,
@@ -191,8 +366,8 @@ describe("POST /login", () => {
     expect(minted).toMatch(UUID_REGEX);
     expect(minted).not.toBe(TEST_DEVICE_ID);
     // The minted device matches no prior session, so nothing is replaced —
-    // the new login coexists with the registration session instead of
-    // silently killing an unrelated browser's session.
+    // the new login coexists with the first session instead of silently
+    // killing an unrelated browser's session.
     const sessions = await prisma.session.findMany({
       where: { project_id: project.id },
     });
@@ -279,7 +454,7 @@ describe("POST /login", () => {
       orderBy: { created_at: "asc" },
     });
 
-    // The registration session survives as an audit record.
+    // The first sign-in's session survives as an audit record.
     expect(sessions).toHaveLength(2);
     expect(sessions[0]!.status).toBe("REVOKED");
     expect(sessions[0]!.revoked_reason).toBe("replaced_by_new_login");
@@ -479,7 +654,7 @@ describe("POST /refresh", () => {
 });
 
 describe("cookie transport without an explicit device header", () => {
-  it("lets a browser-style client register, refresh, and log out on the minted device id alone", async () => {
+  it("lets a browser-style client register, sign in, refresh, and log out on the minted device id alone", async () => {
     const client = cookieClient();
     const csrf = await client.primeCsrf();
 
@@ -489,7 +664,18 @@ describe("cookie transport without an explicit device header", () => {
       deviceId: null,
       csrfToken: csrf,
     });
-    expect(registered.status).toBe(201);
+    // Register no longer establishes a device or a session (ADR 0008).
+    expect(registered.status).toBe(202);
+    expect(client.get("kauth_device")).toBeUndefined();
+
+    const signedIn = await client.request("POST", "/login", {
+      body: { email: credentials.email, password: credentials.password },
+      projectId: project.id,
+      deviceId: null,
+      csrfToken: csrf,
+    });
+    expect(signedIn.status).toBe(200);
+    expect(client.get("kauth_device")).toBeDefined();
 
     // No x-device-id is ever sent; the jar carries kauth_device alongside
     // the auth cookies. A cookie client receives no body tokens — the rotated
@@ -538,14 +724,9 @@ describe("multi-tenant isolation", () => {
     const otherProject = await createTestProject({ name: "Other Project" });
 
     const first = await registerUser();
-    const second = await api("POST", "/register", {
-      body: credentials,
-      projectId: otherProject.id,
-    });
+    const second = await registerAndSignIn(credentials, otherProject.id);
 
-    expect(first.status).toBe(201);
-    expect(second.status).toBe(201);
-    expect(second.body.user.id).not.toBe(first.body.user.id);
+    expect(first.body.user.id).not.toBe(second.body.user.id);
     expect(await prisma.user.count()).toBe(2);
   });
 
@@ -592,10 +773,7 @@ describe("multi-tenant isolation", () => {
     const otherProject = await createTestProject({ name: "Other Project" });
 
     const registeredA = await registerUser();
-    const registeredB = await api("POST", "/register", {
-      body: credentials,
-      projectId: otherProject.id,
-    });
+    const registeredB = await registerAndSignIn(credentials, otherProject.id);
 
     // Trigger reuse detection in project A by replaying its rotated token.
     const rotatedA = await api("POST", "/refresh", {
@@ -625,10 +803,7 @@ describe("multi-tenant isolation", () => {
     const otherProject = await createTestProject({ name: "Other Project" });
 
     const registeredA = await registerUser();
-    const registeredB = await api("POST", "/register", {
-      body: credentials,
-      projectId: otherProject.id,
-    });
+    const registeredB = await registerAndSignIn(credentials, otherProject.id);
 
     const logoutResponse = await api("POST", "/logout", {
       accessToken: registeredA.body.accessToken,

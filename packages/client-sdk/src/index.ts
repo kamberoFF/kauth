@@ -86,24 +86,24 @@ export type SessionState =
   | { status: "signedOut" }
   | ({ status: "signedIn" } & KauthSession);
 
-export interface SignUpResult {
-  user: KauthUser;
-  accessToken: string;
-  refreshToken: string;
-}
-
 export interface KauthClient {
   /**
-   * Registers an end user under the publishable key's project and signs them
-   * in. Throws the platform's `duplicate_email` / `duplicate_username` /
-   * `validation` codes as `KauthError`.
+   * Registers an end user under the publishable key's project. Does **not**
+   * sign them in — the platform's register endpoint returns no session
+   * (ADR 0008) — so the caller must call `signIn` next; the store stays
+   * `signedOut` and `getSnapshot().user` stays `null` until then.
+   *
+   * Throws `KauthError` on `duplicate_username` and `validation`. A
+   * duplicate **email** resolves successfully without creating a second
+   * account: the platform no longer distinguishes that case from a fresh
+   * signup, by design, and neither can this SDK.
    */
-  signUp(input: SignUpInput): Promise<KauthUser>;
+  signUp(input: SignUpInput): Promise<void>;
 
   /**
    * Signs an existing end user in. The platform's login endpoint returns
-   * tokens without a profile, so the session's `user` is null here; call
-   * `signUp`-time data or your own profile endpoint if you need it.
+   * tokens without a profile, so the session's `user` is null; use your own
+   * profile endpoint if you need it.
    *
    * A user enrolled in MFA does not get a session from this call: it returns
    * `{ mfaRequired: true, challengeToken }` and the store stays signed out —
@@ -203,18 +203,9 @@ export function createKauthClient({
 
   return {
     async signUp(input) {
-      const body = await request("POST", "/register", input);
-      const result = body as unknown as SignUpResult;
-      captureDeviceId(body);
-
-      setState({
-        status: "signedIn",
-        user: result.user,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-      });
-
-      return result.user;
+      // Register returns a generic 202 with no session (ADR 0008): no state
+      // transition, no device capture. The caller signs in next.
+      await request("POST", "/register", input);
     },
 
     async signIn(input) {

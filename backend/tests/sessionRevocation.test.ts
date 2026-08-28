@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 import {
   api,
   createTestProject,
+  registerAndSignIn,
   resetDatabase,
   startTestServer,
   stopTestServer,
@@ -23,11 +24,9 @@ const mailer = createMemoryMailer();
 
 let project: Awaited<ReturnType<typeof createTestProject>>;
 
+// Register→login (ADR 0008): register no longer returns a session.
 function registerUser(overrides: Record<string, unknown> = {}) {
-  return api("POST", "/register", {
-    body: { ...credentials, ...overrides },
-    projectId: project.id,
-  });
+  return registerAndSignIn({ ...credentials, ...overrides }, project.id);
 }
 
 /** Registers, then returns the live access token and its session id. */

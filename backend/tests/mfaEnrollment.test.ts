@@ -4,6 +4,7 @@ import { decodeBase32, encodeBase32NoPadding } from "@oslojs/encoding";
 import { generateHOTP } from "@oslojs/otp";
 import {
   api,
+  registerAndSignIn,
   createTestProject,
   resetDatabase,
   startTestServer,
@@ -41,12 +42,10 @@ function canonicalCode(code: string) {
 }
 
 async function registerUser() {
-  const registered = await api("POST", "/register", {
-    body: credentials,
-    projectId: project.id,
-  });
+  // Register→login (ADR 0008): register no longer signs the user in.
+  const signedIn = await registerAndSignIn(credentials, project.id);
 
-  return registered.body.accessToken as string;
+  return signedIn.body.accessToken as string;
 }
 
 async function startEnrollment(accessToken: string) {

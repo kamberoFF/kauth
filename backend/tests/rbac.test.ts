@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 import jwt from "jsonwebtoken";
 import {
   api,
+  registerAndSignIn,
   createTestProject,
   resetDatabase,
   startTestServer,
@@ -29,17 +30,18 @@ let platformUser: { id: string };
 async function signInToPlatformProject(
   overrides: Partial<typeof credentials> = {},
 ) {
-  const registered = await api("POST", "/register", {
-    body: { ...credentials, ...overrides },
-    projectId: PLATFORM_PROJECT_ID,
-  });
+  // Register→login (ADR 0008): register no longer signs the user in.
+  const signedIn = await registerAndSignIn(
+    { ...credentials, ...overrides },
+    PLATFORM_PROJECT_ID,
+  );
 
-  expect(registered.status).toBe(201);
+  expect(signedIn.status).toBe(200);
 
   return {
-    accessToken: registered.body.accessToken as string,
-    refreshToken: registered.body.refreshToken as string,
-    userId: registered.body.user.id as string,
+    accessToken: signedIn.body.accessToken as string,
+    refreshToken: signedIn.body.refreshToken as string,
+    userId: signedIn.body.user.id as string,
   };
 }
 
@@ -171,14 +173,14 @@ describe("requirePlatformStaff authorizes from the database, not the claim", () 
 
   it("refuses an ADMIN whose Project is not the platform Project", async () => {
     const otherProject = await createTestProject({ name: "Other Tenant" });
-    const tenantAdmin = await api("POST", "/register", {
-      body: {
+    const tenantAdmin = await registerAndSignIn(
+      {
         email: "tenant-admin@example.com",
         username: "tenant-admin",
         password: credentials.password,
       },
-      projectId: otherProject.id,
-    });
+      otherProject.id,
+    );
 
     await prisma.user.update({
       where: { id: tenantAdmin.body.user.id },

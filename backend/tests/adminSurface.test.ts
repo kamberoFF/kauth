@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 import {
   api,
   createTestProject,
+  registerAndSignIn,
   resetDatabase,
   startTestServer,
   stopTestServer,
@@ -27,13 +28,15 @@ function registerBody(suffix: string) {
   };
 }
 
-/** Registers into the platform Project and promotes; fresh login each call. */
+/**
+ * Registers into the platform Project and promotes; register→login each call
+ * (ADR 0008: register no longer signs the user in).
+ */
 async function makeStaff(suffix = "staff-surface"): Promise<SignIn> {
-  const registered = await api("POST", "/register", {
-    body: registerBody(suffix),
-    projectId: PLATFORM_PROJECT_ID,
-  });
-  expect(registered.status).toBe(201);
+  const registered = await registerAndSignIn(
+    registerBody(suffix),
+    PLATFORM_PROJECT_ID,
+  );
 
   await prisma.user.update({
     where: { id: registered.body.user.id },
@@ -47,11 +50,10 @@ async function makeStaff(suffix = "staff-surface"): Promise<SignIn> {
 }
 
 async function makePlatformUser(suffix: string): Promise<SignIn> {
-  const registered = await api("POST", "/register", {
-    body: registerBody(suffix),
-    projectId: PLATFORM_PROJECT_ID,
-  });
-  expect(registered.status).toBe(201);
+  const registered = await registerAndSignIn(
+    registerBody(suffix),
+    PLATFORM_PROJECT_ID,
+  );
 
   return {
     accessToken: registered.body.accessToken as string,
@@ -60,11 +62,10 @@ async function makePlatformUser(suffix: string): Promise<SignIn> {
 }
 
 async function makeTenantUser(suffix: string, projectId?: string) {
-  const registered = await api("POST", "/register", {
-    body: registerBody(suffix),
-    projectId: projectId ?? tenantProject.id,
-  });
-  expect(registered.status).toBe(201);
+  const registered = await registerAndSignIn(
+    registerBody(suffix),
+    projectId ?? tenantProject.id,
+  );
 
   return {
     accessToken: registered.body.accessToken as string,

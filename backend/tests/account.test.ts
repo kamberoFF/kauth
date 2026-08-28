@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 import {
   api,
   createTestProject,
+  registerAndSignIn,
   resetDatabase,
   startTestServer,
   stopTestServer,
@@ -26,8 +27,10 @@ function tokenFromLastMail(to: string) {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
+// Register→login (ADR 0008): register no longer returns a session. The
+// verification email still goes out on the register step.
 function registerUser() {
-  return api("POST", "/register", { body: credentials, projectId: project.id });
+  return registerAndSignIn(credentials, project.id);
 }
 
 beforeAll(async () => {

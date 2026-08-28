@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import {
   api,
+  registerAndSignIn,
   createTestProject,
   resetDatabase,
   startTestServer,
@@ -89,10 +90,7 @@ describe("structured request logging", () => {
   });
 
   it("includes user id and session id once authenticated", async () => {
-    const registered = await api("POST", "/register", {
-      body: credentials,
-      projectId: project.id,
-    });
+    const registered = await registerAndSignIn(credentials, project.id);
 
     const { lines } = await captureLogs(() =>
       api("GET", "/protected", { accessToken: registered.body.accessToken }),

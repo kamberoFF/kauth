@@ -4,6 +4,7 @@ import { generateHOTP } from "@oslojs/otp";
 import { OAuth2Tokens } from "arctic";
 import {
   api,
+  registerAndSignIn,
   cookieClient,
   createTestProject,
   resetDatabase,
@@ -104,14 +105,12 @@ async function getUser() {
 }
 
 async function registerUser() {
-  const registered = await api("POST", "/register", {
-    body: credentials,
-    projectId: project.id,
-  });
+  // Register→login (ADR 0008): register no longer signs the user in.
+  const signedIn = await registerAndSignIn(credentials, project.id);
 
-  expect(registered.status).toBe(201);
+  expect(signedIn.status).toBe(200);
 
-  return registered.body.accessToken as string;
+  return signedIn.body.accessToken as string;
 }
 
 /** Registers and walks the full enrollment so tests start from an enrolled
@@ -209,6 +208,12 @@ describe("phase one: enrolled sign-ins pause at the challenge", () => {
     });
     expect(priorSessions).toBeArrayOfSize(1);
 
+    // The sign-in the enrolled user already did (register→login, ADR 0008)
+    // left one LOGIN_SUCCESS; phase one must add none.
+    const successesBefore = await prisma.securityEvent.count({
+      where: { user_id: user.id, event_type: "LOGIN_SUCCESS" },
+    });
+
     await challengeFor();
 
     expect(await prisma.session.count({ where: { user_id: user.id } })).toBe(1);
@@ -218,7 +223,7 @@ describe("phase one: enrolled sign-ins pause at the challenge", () => {
       await prisma.securityEvent.count({
         where: { user_id: user.id, event_type: "LOGIN_SUCCESS" },
       }),
-    ).toBe(0);
+    ).toBe(successesBefore);
 
     expect(accessToken).toBeString();
   });
@@ -286,6 +291,9 @@ describe("POST /mfa/challenge", () => {
 
     const successEvent = await prisma.securityEvent.findFirstOrThrow({
       where: { user_id: user.id, event_type: "LOGIN_SUCCESS" },
+      // The register→login sign-in (ADR 0008) left an earlier LOGIN_SUCCESS;
+      // phase two's is the latest.
+      orderBy: { created_at: "desc" },
     });
     expect(successEvent.metadata).toMatchObject({ method: "totp" });
     expect(successEvent.session_id).toBe(active.id);
@@ -508,7 +516,17 @@ describe("POST /mfa/challenge", () => {
       projectId: project.id,
       csrfToken,
     });
-    expect(registered.status).toBe(201);
+    expect(registered.status).toBe(202);
+
+    // Register no longer signs the user in (ADR 0008): the browser signs in
+    // next, and that is the session whose cookies phase two must leave alone.
+    const firstSignIn = await client.request("POST", "/login", {
+      body: { email: credentials.email, password: credentials.password },
+      projectId: project.id,
+      csrfToken,
+    });
+    expect(firstSignIn.status).toBe(200);
+    expect(client.names).toContain("kauth_session");
 
     const started = await client.request("POST", "/mfa/enrollment", { csrfToken });
     expect(started.status).toBe(200);
@@ -527,7 +545,7 @@ describe("POST /mfa/challenge", () => {
     expect(paused.status).toBe(200);
     expect(paused.body.mfaRequired).toBe(true);
     expect(paused.headers.getSetCookie()).toBeEmpty();
-    // The registration session's cookies are untouched, not refreshed.
+    // The first sign-in's session cookies are untouched, not refreshed.
     expect(client.names).toContain("kauth_session");
 
     const completed = await client.request("POST", "/mfa/challenge", {

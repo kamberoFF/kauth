@@ -3,6 +3,7 @@ import {
   api,
   cookieClient,
   createTestProject,
+  registerAndSignIn,
   resetDatabase,
   startTestServer,
   stopTestServer,
@@ -18,11 +19,12 @@ const credentials = {
 let project: Awaited<ReturnType<typeof createTestProject>>;
 
 /**
- * Registers through the bearer contract so each test starts from a clean jar and
- * exercises only the flow it is about.
+ * Register→login through the bearer contract (ADR 0008: register no longer
+ * returns a session) so each test starts from a signed-in bearer client with
+ * a clean cookie jar and exercises only the flow it is about.
  */
 function registerUser() {
-  return api("POST", "/register", { body: credentials, projectId: project.id });
+  return registerAndSignIn(credentials, project.id);
 }
 
 function login(client: ReturnType<typeof cookieClient>, csrfToken: string) {
@@ -55,7 +57,8 @@ describe("cookie transport", () => {
     expect(client.get("kauth_refresh")).toBeString();
   });
 
-  it("still returns body tokens when the client opts in", async () => {
+  it("still returns body tokens to a bearer client that opts in", async () => {
+    // register→login on the bearer contract; the sign-in ships body tokens.
     const response = await registerUser();
 
     expect(response.body.accessToken).toBeString();
@@ -113,7 +116,7 @@ describe("cookie transport", () => {
     const client = cookieClient();
     const csrfToken = await client.primeCsrf();
 
-    // Explicit echo of the registration device: the re-login then revokes
+    // Explicit echo of the first sign-in's device: the re-login then revokes
     // exactly the session the bearer token below belongs to.
     await client.request("POST", "/login", {
       csrfToken,

@@ -183,6 +183,30 @@ export function verificationEmail(to: string, token: string): Mail {
   };
 }
 
+/**
+ * Sent to the existing account holder when someone tries to register their
+ * address (ADR 0008). The register response is identical on both branches, so
+ * this notice is the only signal the real user gets. It carries nothing
+ * sensitive and nothing confirmable — no token, no username, no project name,
+ * no "who tried" — just a pointer at signing in or resetting the password. A
+ * bare sign-in link is fine: it discloses nothing.
+ */
+export function existingAccountEmail(to: string): Mail {
+  const link = `${config.frontend_url}/login`;
+
+  return {
+    to,
+    subject: "Someone tried to sign up with your email",
+    text:
+      `Someone just tried to create an account using this email address, but ` +
+      `it already has one.\n\n` +
+      `If that was you, you can sign in here:\n\n${link}\n\n` +
+      `If you have forgotten your password, use the reset link on that page.\n\n` +
+      `If it was not you, no new account was created and you can ignore this ` +
+      `message.`,
+  };
+}
+
 export function passwordResetEmail(to: string, token: string): Mail {
   const link = `${config.frontend_url}/reset-password?token=${encodeURIComponent(token)}`;
 

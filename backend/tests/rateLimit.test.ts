@@ -95,3 +95,82 @@ describe("login rate limiting", () => {
     expect(response.status).toBe(401);
   });
 });
+
+/**
+ * Register sends mail (a confirmation link, or the "someone tried to sign up"
+ * notice on an existing address — ADR 0008), so it carries the same
+ * per-account mailbomb guard as the recovery endpoints.
+ *
+ * Mutation check: remove `registerAccountLimiter` from the `/register`
+ * middleware chain in `routes/auth.ts` and re-run — the first test below must
+ * fail, because the sixth attempt would then succeed with `202`.
+ */
+describe("register rate limiting (per account)", () => {
+  it("caps register attempts per project + email inside the window", async () => {
+    const body = {
+      email: "mailbomb-target@example.com",
+      username: "mailbomb-target",
+      password: "correct-horse-battery",
+    };
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      const response = await api("POST", "/register", {
+        body: { ...body, username: `${body.username}-${i}` },
+        projectId: project.id,
+      });
+      statuses.push(response.status);
+    }
+
+    // The first attempt creates the account (202); attempts 2–5 hit the
+    // duplicate-email branch (still 202, still one mail); the sixth is capped.
+    expect(statuses.slice(0, 5).every((status) => status === 202)).toBe(true);
+    const final = statuses.at(-1);
+    expect(final).toBe(429);
+  });
+
+  it("returns the shared error contract when the register limiter trips", async () => {
+    const response = await api("POST", "/register", {
+      body: {
+        email: "mailbomb-target@example.com",
+        username: "mailbomb-target-again",
+        password: "correct-horse-battery",
+      },
+      projectId: project.id,
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.body.error).toEqual({
+      message: "Too many requests",
+      code: "rate_limited",
+    });
+  });
+
+  it("does not share a bucket with a different email in the same project", async () => {
+    const response = await api("POST", "/register", {
+      body: {
+        email: "unrelated-signup@example.com",
+        username: "unrelated-signup",
+        password: "correct-horse-battery",
+      },
+      projectId: project.id,
+    });
+
+    expect(response.status).toBe(202);
+  });
+
+  it("does not share a bucket with the same email in a different project", async () => {
+    const otherProject = await createTestProject({ name: "Register Other Project" });
+
+    const response = await api("POST", "/register", {
+      body: {
+        email: "mailbomb-target@example.com",
+        username: "mailbomb-target-elsewhere",
+        password: "correct-horse-battery",
+      },
+      projectId: otherProject.id,
+    });
+
+    expect(response.status).toBe(202);
+  });
+});

@@ -48,6 +48,11 @@ const SEVERITY: Record<SecurityEventType, SecurityEventSeverity> = {
 
   // Privilege transition (ADR 0007 scope): a staff member changed a role.
   ROLE_CHANGED: SecurityEventSeverity.WARNING,
+
+  // A register attempt on an address that already has an account (ADR 0008).
+  // WARNING: a repeat attempt on a known address is mildly interesting, where
+  // a first registration (USER_REGISTERED) is not.
+  REGISTER_DUPLICATE_EMAIL: SecurityEventSeverity.WARNING,
 };
 
 export interface SecurityEventInput {
