@@ -11,23 +11,23 @@ written twice.
 
 **Status:** done
 
-- [ ] A new logger utility produces one JSON object per line on stdout, with
+- [x] A new logger utility produces one JSON object per line on stdout, with
       a `level` field and a message, no logging library dependency
-- [ ] A request-scoped middleware mints a request id (always server-
+- [x] A request-scoped middleware mints a request id (always server-
       generated — never trusted from an inbound header) and makes it
       available to the logger for that request's lifetime, including error
       paths
-- [ ] Log lines include user id and session id when the request is
+- [x] Log lines include user id and session id when the request is
       authenticated, and are correctly absent when it isn't
-- [ ] Log lines include the route and an outcome code (e.g. status code or
+- [x] Log lines include the route and an outcome code (e.g. status code or
       equivalent)
-- [ ] A configurable log level exists, following this repo's existing
+- [x] A configurable log level exists, following this repo's existing
       env-var/config pattern (a zod-validated field with a sensible default)
-- [ ] Every existing production `console.log`/`console.error` call site
+- [x] Every existing production `console.log`/`console.error` call site
       (startup messages, the 5xx error handler, the audit-log
       own-write-failure fallback, OAuth callback failures, mail-send
       stub/failure logging) is migrated to the new logger
-- [ ] `SecurityEvent`/the existing audit-log write path is completely
+- [x] `SecurityEvent`/the existing audit-log write path is completely
       untouched — application logs and the audit log remain two separate
       mechanisms, and no log line ever contains a token, hash, or credential
       value

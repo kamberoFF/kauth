@@ -26,8 +26,11 @@ the logged degradation path. MFA — TOTP second factors, backup codes,
 two-phase login, and an optional project mandate — shipped 2026-08-25/26
 (see "Features" below), and RBAC enforcement followed the same day: the role
 claim rides every access token while authorization stays DB-fresh, and a
-platform-staff surface landed under `/admin/*` (ADR 0007). **Next up:** what
-remains of the feature list — passkeys and asymmetric access-token signing.
+platform-staff surface landed under `/admin/*` (ADR 0007). **Next up:** the deferred-closeout batch
+(`.scratch/deferred-closeout/plan.md`) — tenant-admin gating, closing the
+registration duplicate-email oracle by dropping register auto-login, an
+integration-supplied mailer posture, per-Project OAuth apps, and the first
+frontend auth pages — then passkeys and asymmetric access-token signing.
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
 That plan was written in June 2026, before any of it was built; the parts that
@@ -114,7 +117,9 @@ PATCH route).
   happy path), a register-contract change frozen behind ADR 0003's
   `X-Kauth-Contract-Version`. Revisit only by explicitly re-deciding that
   contract question. The `duplicate_username` 409 is not an oracle: usernames
-  are user-chosen public handles. See `.scratch/identity-oracles/`.
+  are user-chosen public handles. See `.scratch/identity-oracles/`. **Update
+  2026-08-26:** the re-decision has been made — register drops auto-login;
+  see `.scratch/deferred-closeout/plan.md`, epic pending.
 
 ### 4. Session policy — done 2026-08-24
 
@@ -171,7 +176,9 @@ users, view/revoke any Session, and change platform users' roles (self-change
 refused; `ROLE_CHANGED` audited with actor attribution). First staff member
 comes from `scripts/promoteStaff.ts`; after that, staff promote staff over
 the API. Per-project tenant-admin gating is **deferred**, not declined:
-revisit when a consuming app states actual requirements. Contract version
+revisit when a consuming app states actual requirements. **Update
+2026-08-26:** requirements stated (full project management inside the own
+Project); queued in `.scratch/deferred-closeout/plan.md`. Contract version
 bumped to 0.5.0 across the server and both SDKs.
 
 ## Before starting the SDK — satisfied and shipped 2026-08-24
