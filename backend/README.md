@@ -13,7 +13,15 @@ bunx --bun prisma migrate deploy
 bun run dev
 ```
 
-Copy `.env.example` to `.env` first. `JWT_SECRET` and `COOKIE_SECRET` must be at
+Copy `.env.example` to `.env` first — or run the interactive setup wizard,
+which generates the secrets and walks through Postgres/Redis, the OAuth
+provider consoles, the cleanup schedule, and the first staff member:
+
+```bash
+bash scripts/setup.sh             # from backend/
+```
+
+`JWT_SECRET` and `COOKIE_SECRET` must be at
 least 32 characters in production; the app refuses to start otherwise.
 
 ```bash
