@@ -41,7 +41,7 @@ one `/wizard`, then `/implement` per ticket with `/clear` between:
 | Order | Epic | Tracker dir | Decisions | Notes |
 | --- | --- | --- | --- | --- |
 | 0 | ~~Tracker hygiene~~ | `.scratch/tracker-hygiene/` | — | Done 2026-08-26: ops-hardening issue 01 acceptance boxes ticked post-hoc |
-| 1 | Register oracle + mailer posture | `.scratch/register-oracle/`, `.scratch/mailer-posture/` | 2, 3 | Grilling done 2026-08-28 (frontier cleared, see below). Mailer-posture spec + 2 tickets published 2026-08-28 (`.scratch/mailer-posture/`, ready-for-agent); next is `/implement` ticket 01, then `/to-spec` for register-oracle |
+| 1 | Register oracle + mailer posture | `.scratch/register-oracle/`, `.scratch/mailer-posture/` | 2, 3 | Grilling done 2026-08-28 (frontier cleared, see below). Mailer-posture **complete** — tickets 01 (`bf6299d`) + 02 (docs-sync, roadmap) both done 2026-08-28. Next is `/to-spec` for register-oracle |
 | — | Setup wizard | — | — | Generated after session 1 settles config story; walks through OAuth app creation, secrets generation, cleanup cron, staff promotion |
 | 2 | Tenant RBAC + per-Project OAuth | `.scratch/tenant-rbac/`, `.scratch/project-oauth/` | 1, 4 | Management-surface pair; project-oauth needs its own ADR (encryption, redirect/state design, precedence) |
 | 3 | Frontend auth flows | `.scratch/frontend-auth/` | — | Consumes sessions 1–2's final contracts via client-sdk; minimum scope: verify-email, reset-password, OAuth callback/exchange pages. Whether full login/register/MFA UI joins this epic is a session-3 grilling question |

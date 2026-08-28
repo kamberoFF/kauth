@@ -3,7 +3,7 @@
 **Living document.** Unlike the dated audit and remediation logs, this file is
 kept current — if it disagrees with the code, the file is wrong.
 
-Last reviewed: 2026-08-26.
+Last reviewed: 2026-08-28.
 
 **Multi-tenancy pivot: foundation complete.** As of 2026-08-22 kauth has been
 extended into a self-hosted, multi-tenant auth platform — see
@@ -26,10 +26,13 @@ the logged degradation path. MFA — TOTP second factors, backup codes,
 two-phase login, and an optional project mandate — shipped 2026-08-25/26
 (see "Features" below), and RBAC enforcement followed the same day: the role
 claim rides every access token while authorization stays DB-fresh, and a
-platform-staff surface landed under `/admin/*` (ADR 0007). **Next up:** the deferred-closeout batch
-(`.scratch/deferred-closeout/plan.md`) — tenant-admin gating, closing the
-registration duplicate-email oracle by dropping register auto-login, an
-integration-supplied mailer posture, per-Project OAuth apps, and the first
+platform-staff surface landed under `/admin/*` (ADR 0007). The
+deferred-closeout batch (`.scratch/deferred-closeout/plan.md`) is now
+underway: an integration-supplied mailer posture shipped 2026-08-28 — a
+production instance refuses to start without an explicitly configured mail
+transport (see "Operations" below). **Next up:** the rest of that batch —
+closing the registration duplicate-email oracle by dropping register
+auto-login, tenant-admin gating, per-Project OAuth apps, and the first
 frontend auth pages — then passkeys and asymmetric access-token signing.
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
@@ -84,6 +87,19 @@ Shipped as the `ops-hardening` tickets: non-root container with a liveness
 healthcheck, migrate-on-startup with bounded graceful shutdown, structured
 logging with request/user/session correlation, liveness/readiness split, and
 the coordinated session/audit cleanup job (ADR 0004).
+
+**Mail transport hardening — done 2026-08-28** (deferred-closeout epic 1,
+`.scratch/mailer-posture/`). kauth ships no mail transport; `lib/mail.ts`
+defaults to `consoleMailer`, which prints verification links and reset tokens
+to stdout. That is now a development/test default only. A new optional
+`MAILER_MODULE` env var names an operator-supplied module exporting a `Mailer`
+(`default` or named `mailer` export); `bootMailer` resolves and installs it
+before migrations run, and in production the boot fails fast when no transport
+is configured — the same posture `config.ts` takes on an unsafe secret. The
+console-transport-in-production risk (tokens in logs) is closed; the setup
+wizard prompts for the module and will not enable `REQUIRE_EMAIL_VERIFICATION`
+without one. No ADR: this enforces the mailer posture the project already
+intended, it does not decide a new one.
 
 ### 2. Password hashing — done 2026-08-24
 
