@@ -4,3 +4,6 @@
 
 # Per-person agent decision profiles (see .profiles/kambe.md)
 .profiles/
+
+# Personal research/scratch docs on agent tooling — not part of kauth's domain
+docs/claude-automation-guide.md
