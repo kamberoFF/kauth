@@ -33,6 +33,75 @@ export interface VerifiedSession {
   expiresAt: string;
 }
 
+/** One page of a cursor-paginated list. `nextCursor` is null on the last page. */
+export interface Page<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
+/**
+ * A session in the calling project's Project-wide session list. Every session
+ * list in kauth is ACTIVE-only; revocation history lives in the event log.
+ */
+export interface KauthSessionSummary {
+  id: string;
+  userId: string;
+  status: string;
+  deviceId: string | null;
+  deviceName: string | null;
+  deviceType: string | null;
+  osName: string | null;
+  osVersion: string | null;
+  browserName: string | null;
+  browserVersion: string | null;
+  ipCreated: string | null;
+  ipLast: string | null;
+  countryCreated: string | null;
+  countryLast: string | null;
+  cityCreated: string | null;
+  cityLast: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string;
+}
+
+/**
+ * One row of the calling project's security-event log. `metadata` is returned
+ * exactly as the platform stored it — never tokens, hashes, or credentials
+ * (a platform invariant), but identifiers a Project owner is entitled to see.
+ */
+export interface KauthSecurityEvent {
+  id: string;
+  eventType: string;
+  severity: string;
+  userId: string | null;
+  sessionId: string | null;
+  ip: string | null;
+  userAgent: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface ListSessionsOptions {
+  /** Narrow to one user's sessions. */
+  userId?: string;
+  /** Page size, clamped server-side to 1–200 (default 50). */
+  limit?: number;
+  /** The `nextCursor` from a previous page. */
+  cursor?: string;
+}
+
+export interface ListEventsOptions {
+  /** One event type or several; each must name a real `SecurityEventType`. */
+  eventType?: string | string[];
+  /** Narrow to events about one user. */
+  userId?: string;
+  /** Page size, clamped server-side to 1–200 (default 50). */
+  limit?: number;
+  /** The `nextCursor` from a previous page. */
+  cursor?: string;
+}
+
 interface RawSession {
   id: string;
   userId: string;
@@ -86,6 +155,20 @@ export interface KauthBackend {
 
   /** Revokes any ACTIVE session belonging to the calling project. */
   revokeSession(sessionId: string): Promise<void>;
+
+  /**
+   * The calling project's ACTIVE sessions, reverse-chronological and
+   * cursor-paginated — never another project's. Pass `nextCursor` back as
+   * `cursor` to walk subsequent pages.
+   */
+  listSessions(options?: ListSessionsOptions): Promise<Page<KauthSessionSummary>>;
+
+  /**
+   * The calling project's security-event log, reverse-chronological and
+   * cursor-paginated — logins, failures, password resets, MFA changes, key
+   * issuance/revocation. Scoped to the key's own Project.
+   */
+  listEvents(options?: ListEventsOptions): Promise<Page<KauthSecurityEvent>>;
 }
 
 /**
@@ -107,8 +190,23 @@ export function createKauthBackend({
     }
   }
 
-  async function request(method: string, path: string): Promise<unknown> {
-    const response = await fetch(`${root}${path}`, {
+  async function request(
+    method: string,
+    path: string,
+    query?: Record<string, string | string[] | number | undefined>,
+  ): Promise<unknown> {
+    const url = new URL(`${root}${path}`);
+
+    for (const [key, value] of Object.entries(query ?? {})) {
+      if (value === undefined) {
+        continue;
+      }
+      for (const entry of Array.isArray(value) ? value : [value]) {
+        url.searchParams.append(key, String(entry));
+      }
+    }
+
+    const response = await fetch(url, {
       method,
       headers: {
         "x-api-key": secretKey,
@@ -165,6 +263,27 @@ export function createKauthBackend({
 
     async revokeSession(sessionId) {
       await request("DELETE", `/project/sessions/${sessionId}`);
+    },
+
+    async listSessions(options = {}) {
+      const body = (await request("GET", "/project/sessions", {
+        userId: options.userId,
+        limit: options.limit,
+        cursor: options.cursor,
+      })) as { sessions: KauthSessionSummary[]; nextCursor: string | null };
+
+      return { items: body.sessions, nextCursor: body.nextCursor };
+    },
+
+    async listEvents(options = {}) {
+      const body = (await request("GET", "/project/events", {
+        eventType: options.eventType,
+        userId: options.userId,
+        limit: options.limit,
+        cursor: options.cursor,
+      })) as { events: KauthSecurityEvent[]; nextCursor: string | null };
+
+      return { items: body.events, nextCursor: body.nextCursor };
     },
   };
 }

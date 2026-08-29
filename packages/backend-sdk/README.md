@@ -2,8 +2,9 @@
 
 Server-only client for a [kauth](../../README.md) instance, authenticated
 with a project's **secret** key. Verify sessions against the platform's own
-database in real time, list the project's users, revoke sessions. Never ship
-this package (or the key) to a browser.
+database in real time, list the project's users and sessions, read its
+security-event log, revoke sessions. Never ship this package (or the key) to a
+browser.
 
 ```ts
 import { createKauthBackend } from "@kauth/backend-sdk";
@@ -22,6 +23,32 @@ await kauth.revokeSession(sessionId);
 
 Errors throw as `KauthError` carrying the platform's code (`session_inactive`,
 `session_not_found`, `unknown_error`, …).
+
+## Listing sessions and events
+
+`listSessions()` and `listEvents()` read the calling project's own data,
+reverse-chronological and cursor-paginated. Each returns a
+`Page<T>` = `{ items, nextCursor }`; pass `nextCursor` back as `cursor` to
+walk subsequent pages (`nextCursor` is `null` on the last page).
+
+```ts
+// Every ACTIVE session in the project, or just one user's.
+const page = await kauth.listSessions({ limit: 100 });
+const forUser = await kauth.listSessions({ userId });
+
+// The project's security-event log, filterable by type and user.
+let cursor: string | undefined;
+do {
+  const events = await kauth.listEvents({
+    eventType: ["LOGIN_FAILED", "MFA_DISABLED"],
+    cursor,
+  });
+  ship(events.items);
+  cursor = events.nextCursor ?? undefined;
+} while (cursor);
+```
+
+`listUsers()` stays non-paginated — its underlying route is unchanged.
 
 ## Project settings
 

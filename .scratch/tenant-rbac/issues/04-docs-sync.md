@@ -1,6 +1,6 @@
 # 04 — Docs-sync: roadmap, route inventory, READMEs
 
-Status: ready-for-agent
+Status: done (folded into ticket 03's commit)
 
 **What to build:** the living docs describe the Project owner management
 surface as shipped.
@@ -24,8 +24,8 @@ surface as shipped.
 
 **Blocked by:** 03
 
-- [ ] `docs/roadmap.md` describes the owner management surface as shipped and explicitly states no tenant-admin role was added
-- [ ] The roadmap's contract version reads `0.7.0` where tracked
-- [ ] `Last reviewed:` updated
-- [ ] `CLAUDE.md` route inventory (if present) lists the new routes
-- [ ] `backend/README.md` / SDK READMEs carry no stale contract-version text and document the new SDK methods
+- [x] `docs/roadmap.md` describes the owner management surface as shipped and explicitly states no tenant-admin role was added — new "Update 2026-08-29" block in the RBAC-enforcement section, plus the intro paragraph
+- [x] The roadmap's contract version reads `0.7.0` where tracked (stated as the shared epic-2 bump)
+- [x] `Last reviewed:` already `2026-08-29` (bumped by an earlier same-day edit); unchanged
+- [x] `CLAUDE.md` route inventory — n/a; the Layout section calls `routes/` "thin" and does not enumerate routes
+- [x] SDK READMEs: `backend-sdk` README documents `listSessions()` / `listEvents()` and drops the stale one-line capability summary. `backend/README.md` names no contract version and its API tables never covered the `/project/*` or owner surface (neither did tickets 01–02), so no stale text to fix.

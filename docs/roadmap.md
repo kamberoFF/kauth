@@ -32,9 +32,18 @@ underway. Epic 1 is complete: an integration-supplied mailer posture shipped
 2026-08-28 — a production instance refuses to start without an explicitly
 configured mail transport (see "Operations" below) — and register dropped
 auto-login on 2026-08-29, closing the last identity oracle (generic `202`,
-no session; ADR 0008; contract → `0.6.0`). **Next up:** the rest of that
-batch — tenant-admin gating, per-Project OAuth apps, and the first frontend
-auth pages — then passkeys and asymmetric access-token signing.
+no session; ADR 0008; contract → `0.6.0`). Epic 2's first half shipped
+2026-08-29: a Project owner now has a session-authenticated management
+surface over their own Project — a users list, a Project-wide session
+list/inspect/revoke, and cursor-paginated security-event reads — and the two
+genuinely new reads (Project-wide session list, event log) are mirrored onto
+the secret-key `/project/*` surface, with `backend-sdk` `listSessions()` /
+`listEvents()` to match. **No tenant-admin role was introduced** — `Role.ADMIN`
+still gates nothing in a tenant Project and ADR 0007's deferral stands (see
+"RBAC enforcement" below). Contract → `0.7.0`; this is the shared epic-2 bump,
+and the per-Project OAuth half rides the same number. **Next up:** the rest of
+that batch — per-Project OAuth apps and the first frontend auth pages — then
+passkeys and asymmetric access-token signing.
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
 That plan was written in June 2026, before any of it was built; the parts that
@@ -200,6 +209,34 @@ revisit when a consuming app states actual requirements. **Update
 2026-08-26:** requirements stated (full project management inside the own
 Project); queued in `.scratch/deferred-closeout/plan.md`. Contract version
 bumped to 0.5.0 across the server and both SDKs.
+
+**Update 2026-08-29 — Project owner management surface (epic 2, first half).**
+The grilling that split the deferred-closeout batch chose the *smaller* thing
+here: no tenant-admin role, no end-user-governs-end-user model, no ADR.
+`Role.ADMIN` in a tenant Project still gates nothing and ADR 0007's deferral
+stands. What shipped is a bigger **session-authenticated management surface
+for the Project owner** over their own Project, behind
+`requireAuth + requireProjectOwnership`:
+
+- `GET /projects/:projectId/users` — the Project's end users.
+- `GET /projects/:projectId/sessions` — new: a Project-wide ACTIVE-session
+  list, `?userId=` filterable, cursor-paginated.
+- `GET /projects/:projectId/sessions/:sessionId` — one session, Project-scoped.
+- `DELETE /projects/:projectId/sessions/:sessionId` — revoke any ACTIVE
+  session; `SESSION_REVOKED` attributed to the owner (`metadata.actor`, now
+  normalised to `self | owner | staff | api_key` across all four call sites).
+- `GET /projects/:projectId/events` — new: the Project's `security_events`,
+  reverse-chronological, cursor-paginated, `?eventType=` / `?userId=`
+  filterable.
+
+The two genuinely new reads are mirrored onto the secret-key surface
+(`GET /project/sessions`, `GET /project/events`) for a downstream backend, and
+`backend-sdk` gained `listSessions()` / `listEvents()` returning
+`Page<T> = { items, nextCursor }` (keyset pagination — `lib/pagination.ts`).
+Owner *write* routes (settings, keys) still reject a secret-key-only request
+with `401`. Contract → `0.7.0` across the server and both SDKs; this is the
+**shared epic-2 bump** — the per-Project OAuth half rides the same number.
+`client-sdk` moved too, lockstep-only (no API change this half).
 
 ## Before starting the SDK — satisfied and shipped 2026-08-24
 

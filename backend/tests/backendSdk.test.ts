@@ -240,6 +240,138 @@ describe("backend SDK (real HTTP against the test server)", () => {
     });
   });
 
+  describe("listSessions", () => {
+    it("returns a typed Page of the calling project's session summaries", async () => {
+      const { sdk } = await bootstrap();
+
+      const page = await sdk.listSessions();
+
+      expect(page.nextCursor).toBeNull();
+      expect(page.items).toHaveLength(1);
+      const [session] = page.items;
+      expect(session?.id).toBeDefined();
+      expect(session?.userId).toBeDefined();
+      expect(session?.status).toBe("ACTIVE");
+    });
+
+    it("filters by userId and round-trips multi-page results via nextCursor", async () => {
+      const { sdk, owned } = await bootstrap();
+
+      const user = await prisma.user.findFirstOrThrow({
+        where: { project_id: owned.id },
+      });
+      // Three total sessions for the one user (bootstrap made one).
+      for (let i = 0; i < 2; i += 1) {
+        await prisma.session.create({
+          data: {
+            user_id: user.id,
+            project_id: owned.id,
+            expires_at: new Date(Date.now() + 86_400_000),
+          },
+        });
+      }
+      const stranger = await prisma.user.create({
+        data: { project_id: owned.id, email: "stranger@example.com" },
+      });
+      await prisma.session.create({
+        data: {
+          user_id: stranger.id,
+          project_id: owned.id,
+          expires_at: new Date(Date.now() + 86_400_000),
+        },
+      });
+
+      const first = await sdk.listSessions({ userId: user.id, limit: 2 });
+      expect(first.items).toHaveLength(2);
+      expect(first.nextCursor).not.toBeNull();
+
+      const second = await sdk.listSessions({
+        userId: user.id,
+        limit: 2,
+        cursor: first.nextCursor!,
+      });
+      expect(second.nextCursor).toBeNull();
+
+      const ids = [...first.items, ...second.items].map((s) => s.id);
+      expect(new Set(ids).size).toBe(3);
+      const strangerSessions = await prisma.session.findMany({
+        where: { user_id: stranger.id },
+      });
+      for (const s of strangerSessions) {
+        expect(ids).not.toContain(s.id);
+      }
+    });
+  });
+
+  describe("listEvents", () => {
+    it("returns a typed Page carrying the documented event fields", async () => {
+      const { sdk } = await bootstrap();
+
+      const page = await sdk.listEvents();
+
+      expect(Array.isArray(page.items)).toBe(true);
+      expect(page.items.length).toBeGreaterThan(0);
+      const [event] = page.items;
+      expect(event?.id).toBeDefined();
+      expect(event?.eventType).toBeDefined();
+      expect(event?.severity).toBeDefined();
+      expect(event).toHaveProperty("metadata");
+      expect(event?.createdAt).toBeDefined();
+    });
+
+    it("filters by eventType and by userId, and paginates", async () => {
+      const { sdk, owned, publishable } = await bootstrap();
+
+      // Generate a handful of LOGIN_FAILED events for the end user.
+      for (let i = 0; i < 3; i += 1) {
+        await api("POST", "/login", {
+          body: { email: "enduser@example.com", password: "wrong-password" },
+          apiKey: publishable,
+        });
+      }
+
+      const failures = await sdk.listEvents({ eventType: "LOGIN_FAILED" });
+      expect(failures.items.length).toBeGreaterThanOrEqual(3);
+      for (const event of failures.items) {
+        expect(event.eventType).toBe("LOGIN_FAILED");
+      }
+
+      const user = await prisma.user.findFirstOrThrow({
+        where: { project_id: owned.id, email: "enduser@example.com" },
+      });
+      const forUser = await sdk.listEvents({ userId: user.id });
+      for (const event of forUser.items) {
+        expect(event.userId).toBe(user.id);
+      }
+
+      const firstPage = await sdk.listEvents({
+        eventType: "LOGIN_FAILED",
+        limit: 2,
+      });
+      expect(firstPage.items).toHaveLength(2);
+      expect(firstPage.nextCursor).not.toBeNull();
+      const nextPage = await sdk.listEvents({
+        eventType: "LOGIN_FAILED",
+        limit: 2,
+        cursor: firstPage.nextCursor!,
+      });
+      const pagedIds = [...firstPage.items, ...nextPage.items].map((e) => e.id);
+      expect(new Set(pagedIds).size).toBe(pagedIds.length);
+    });
+
+    it("accepts several event types as an array", async () => {
+      const { sdk } = await bootstrap();
+
+      const page = await sdk.listEvents({
+        eventType: ["LOGIN_SUCCESS", "USER_REGISTERED"],
+      });
+
+      for (const event of page.items) {
+        expect(["LOGIN_SUCCESS", "USER_REGISTERED"]).toContain(event.eventType);
+      }
+    });
+  });
+
   describe("contract version enforcement (ADR 0003)", () => {
     it("hard-fails on a version mismatch, with a may-have-completed message", async () => {
       const { sessionId } = await bootstrap();
@@ -263,6 +395,30 @@ describe("backend SDK (real HTTP against the test server)", () => {
       const message = (error as Error).message;
       expect(message).toContain("may have already completed");
       expect(message.toLowerCase()).toContain("retried");
+    });
+
+    it("fires from listSessions() and listEvents() before the body is read", async () => {
+      await bootstrap();
+      const stale = createKauthBackend({
+        baseUrl,
+        secretKey: "irrelevant-for-this-assertion",
+        contractVersion: "0.0.0-stale",
+      });
+
+      for (const call of [
+        () => stale.listSessions(),
+        () => stale.listEvents(),
+      ]) {
+        let error: unknown;
+        try {
+          await call();
+        } catch (caught) {
+          error = caught;
+        }
+        expect((error as { code?: string }).code).toBe(
+          "contract_version_mismatch",
+        );
+      }
     });
 
     it("a mutating call still completes server-side and is never auto-retried", async () => {
