@@ -22,6 +22,9 @@ import { sendAuthResponse } from "../lib/tokenTransport";
 import { recordSecurityEvent, requestContext, tryRecordSecurityEvent } from "../lib/securityEvents";
 import { AppError } from "../types/errors";
 
+// Key-derivation context for the TOTP shared secret at rest (ADR 0006).
+const TOTP_SECRET_CONTEXT = "kauth:mfa-totp";
+
 /**
  * A stored secret with a null `mfa_enrolled_at` is a *pending* enrollment:
  * it challenges nothing at sign-in until the first valid code confirms it.
@@ -52,7 +55,7 @@ export const startMfaEnrollment: RequestHandler = async (req, res, next) => {
 
     // Restarting a pending enrollment replaces the secret — the old one dies.
     const secret = generateTotpSecret();
-    const encrypted = encrypt(secret);
+    const encrypted = encrypt(secret, TOTP_SECRET_CONTEXT);
 
     await prisma.$transaction(async (tx) => {
       const claimed = await tx.user.updateMany({
@@ -104,7 +107,7 @@ export const verifyMfaEnrollment: RequestHandler = async (req, res, next) => {
       );
     }
 
-    const matchedStep = matchTotpStep(decrypt(user.totp_secret), parsed.data.code);
+    const matchedStep = matchTotpStep(decrypt(user.totp_secret, TOTP_SECRET_CONTEXT), parsed.data.code);
 
     if (matchedStep === null) {
       // Deliberately no security event here: the token submission limiter is
@@ -244,7 +247,7 @@ export const disableMfa: RequestHandler = async (req, res, next) => {
     // Proof two: a current TOTP or an unused backup code, checked exactly as
     // sign-in would — including the replay guard against last_totp_step.
     const matchedStep = user.totp_secret
-      ? matchTotpStep(decrypt(user.totp_secret), parsed.data.code)
+      ? matchTotpStep(decrypt(user.totp_secret, TOTP_SECRET_CONTEXT), parsed.data.code)
       : null;
 
     // Existence, not identity: unlike the challenge flow there is no row to
@@ -381,7 +384,7 @@ export const verifyMfaChallenge: RequestHandler = async (req, res, next) => {
       });
 
     const matchedStep = user.totp_secret
-      ? matchTotpStep(decrypt(user.totp_secret), parsed.data.code)
+      ? matchTotpStep(decrypt(user.totp_secret, TOTP_SECRET_CONTEXT), parsed.data.code)
       : null;
 
     let backupCodeId: string | null = null;

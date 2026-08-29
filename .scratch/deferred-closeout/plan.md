@@ -123,6 +123,120 @@ Frontier cleared over three rounds. Settled design, both epics:
 Contract version: **per-epic bumps**, not one batch stroke. This epic →
 0.6.0; epic 2 bumps again when it lands.
 
+## Session 2 grilling outcome (2026-08-29)
+
+Frontier cleared over four rounds. Both epics settled.
+**Specs published 2026-08-29** (`ready-for-agent`):
+`.scratch/tenant-rbac/spec.md` (the Project owner management surface — dir
+name is historical, there is no role) and `.scratch/project-oauth/spec.md`
+(per-Project Provider apps, ADR 0009). Test seams confirmed with the
+operator: tenant-rbac reuses the existing `api()` + `backendSdk.test.ts`
+seams; project-oauth adds one in-process hook `registerOAuthProviderFactory`
+(sibling of `registerOAuthProvider`).
+
+**tenant-rbac tickets published 2026-08-29** (`ready-for-agent`, linear
+`01 → 02 → 03 → 04`): `01` project audit-log reads (owner + secret-key) +
+carries the `0.7.0` bump + `lib/pagination.ts` + shared serialize prefactor;
+`02` project sessions & users (owner surface + secret-key session list) +
+`SESSION_REVOKED` actor normalization; `03` backend-sdk `listEvents()` /
+`listSessions()` (blocked by 01+02); `04` docs-sync.
+
+**project-oauth tickets published 2026-08-29** (`ready-for-agent`, chain
+`{01, 02} → 03 → 04 → 05`): `01` cryptoBox context param (prefactor,
+unblocked); `02` signed OAuth `state` + drop `kauth_oauth_project`
+(unblocked); `03` per-Project Provider apps — `ProjectOAuthCredential` table
++ `OAuthCredentialMode`, factory registry, `resolveProjectProvider`,
+`GET /oauth/providers?projectId=`, `PROJECT_OAUTH_CONFIG_CHANGED` enum,
+`registerOAuthProviderFactory` test hook (blocked by 01+02, does NOT bump
+contract); `04` owner management surface `/projects/:projectId/oauth/providers`
+(blocked by 03); `05` closeout — ADR 0009 + client-sdk + docs-sync (blocked
+by 04).
+
+Implementation order across epic 2: tenant-rbac `01→04` first (01 carries
+the `0.7.0` bump), then project-oauth `01→05`. `/implement` per ticket,
+`/clear` between.
+Contract version: **one `0.7.0` bump for the whole epic**, applied in the
+first contract-touching ticket, no re-bump by later epic-2 tickets; both
+SDKs redeploy once at epic close.
+
+### Tenant RBAC — the owner gets a bigger surface, no new role
+
+- **No tenant-admin role.** `Role.ADMIN` stays inert in tenant Projects;
+  ADR 0007 and the `Role` glossary entry are unchanged. "Tenant admin" =
+  the Project **owner** (a platform-Project developer on `Project.owner_id`)
+  with more session-authenticated endpoints. **No ADR** for this half —
+  roadmap + CONTEXT note only.
+- **New owner-session endpoints**, under `/projects/:projectId/*` behind
+  `requireAuth` + `requireProjectOwnership`, running *parallel* to (not
+  replacing) the secret-key `/project/*` routes:
+  - `GET /projects/:projectId/users`
+  - `GET /projects/:projectId/sessions` (new — project-wide session list,
+    doesn't exist today), `GET|DELETE /projects/:projectId/sessions/:id`
+  - `GET /projects/:projectId/events` — reverse-chron, cursor-paginated,
+    filterable by `event_type` and `user_id`; returns `id, event_type,
+    severity, user_id, session_id, ip, user_agent, created_at, metadata`;
+    `metadata` passed through as stored.
+- **Secret-key parity.** The audit-read and project-wide session-list
+  endpoints are *also* mirrored to the secret key (`GET /project/events`,
+  `GET /project/sessions`). Backend-SDK grows `listEvents()` /
+  `listSessions()`. Write routes (`/projects/:id/oauth/*`, settings, keys)
+  stay owner-session only.
+- `SESSION_REVOKED` metadata gains an `owner_id` actor marker alongside the
+  existing `apiKeyId` / `actor_user_id` variants.
+- `GET /oauth/providers` becomes `?projectId=`-scoped (contract change).
+
+### Per-Project OAuth — ADR 0009
+
+Full design in `docs/adr/0009-per-project-oauth-credentials.md`. Key points:
+
+- **Built-in providers only** (google, github). Custom providers stay
+  instance-level via `registerOAuthProvider`.
+- **`ProjectOAuthCredential` table**, one row per `(project_id,
+  provider_id)`. `client_id` plaintext; `client_secret` via `cryptoBox`
+  under `kauth:project-oauth`. `mode`: `OVERRIDE` | `DISABLED`; absent row
+  = inherit the instance app.
+- **Precedence**: instance config is an inheritable default for every
+  Project; a Provider app fully overrides per-Project; a Project can
+  disable a provider outright.
+- **Callback**: one instance-wide callback URL, unchanged. Project id
+  travels in a signed `state` —
+  `<random>.<projectId>.<HMAC-SHA256(k, random ‖ projectId)>`, `k` =
+  `SHA-256(ENCRYPTION_KEY ‖ "kauth:oauth-state")`. HMAC verified at
+  callback, `projectId` read from `state`, `random` compared to the
+  `kauth_oauth_state` cookie. **`kauth_oauth_project` cookie removed.**
+- **Resolution**: `getOAuthProvider` project-aware, per-request client
+  construction (no cache), instance fallback; `DISABLED`/unknown → `404`
+  at start and callback.
+- **Management**: owner-session only, `/projects/:projectId/oauth/providers`
+  — `GET` (effective config, never the secret), `PUT` (`{clientId,
+  clientSecret}` → `OVERRIDE`; `{disabled:true}` → `DISABLED`), `DELETE`
+  (→ inherit). Secret key rejected on writes. No credential validation on
+  write. Public `GET /oauth/providers?projectId=` gets `oauthLimiter`,
+  `404` on unknown project id.
+- **Event**: `PROJECT_OAUTH_CONFIG_CHANGED` (WARNING), metadata
+  `{ provider, action: "configured" | "disabled" | "cleared" }`, secret
+  never logged. Migration adds enum value + `SEVERITY` entry.
+- **Existing links**: disabling a provider removes it as a login path but
+  keeps the `Account` row (re-enable restores it); changing creds doesn't
+  orphan links (provider subject id is stable across OAuth clients).
+
+### Vocabulary
+
+New `CONTEXT.md` term **Provider app** (added this session). No change to
+`Role`, `Platform staff`, `Account`.
+
+### Abuse-path tests (mutation-checked, ship in the same tickets)
+
+1. Cross-project credential isolation (drop the project filter → fails).
+2. Signed-`state` tamper — `state` re-signed for another project id →
+   `state_mismatch` (revert to cookie-only → fails).
+3. Disabled provider → `404` at start and callback.
+4. `client_secret` round-trips cryptoBox, in no response, in no audit
+   metadata.
+5. Owner-surface auth — secret key rejected on `/projects/:id/oauth/*`
+   writes; non-owner session → `404`.
+6. Audit-read scoping — owner of project A cannot read project B's events.
+
 ## Close-out duties
 
 - Each epic ends with a docs-sync ticket updating `docs/roadmap.md` and

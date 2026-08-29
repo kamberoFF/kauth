@@ -4,38 +4,37 @@ import config from "../config";
 /**
  * AES-256-GCM encryption for data that must be recoverable at rest — today
  * the TOTP shared secret, so enrollment survives server restarts and an
- * authenticator can stay in sync (ADR 0006). Payload layout is
+ * authenticator can stay in sync (ADR 0006). Each consumer names its own
+ * key-derivation context (see below). Payload layout is
  * base64(iv ‖ tag ‖ ciphertext) with a fresh random IV per call.
  */
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
 /**
- * Namespaced key derivation: a future consumer derives its own subkey from
- * the same ENCRYPTION_KEY under a different context label without sharing
- * this one, and a ciphertext sealed under one context never verifies under
- * another.
+ * Namespaced key derivation: each consumer passes its own context label so it
+ * derives a distinct subkey from the shared ENCRYPTION_KEY, and a ciphertext
+ * sealed under one context never verifies under another (distinct key + the
+ * GCM auth tag). Callers own the label — today only "kauth:mfa-totp".
  */
-const KEY_CONTEXT = "kauth:mfa-totp";
-
-function derivedKey() {
+function derivedKey(context: string) {
   return crypto
     .createHash("sha256")
     .update(config.encryption_key)
-    .update(KEY_CONTEXT)
+    .update(context)
     .digest();
 }
 
-export function encrypt(plaintext: string) {
+export function encrypt(plaintext: string, context: string) {
   const iv = crypto.randomBytes(IV_BYTES);
-  const cipher = crypto.createCipheriv("aes-256-gcm", derivedKey(), iv);
+  const cipher = crypto.createCipheriv("aes-256-gcm", derivedKey(context), iv);
 
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
 
   return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString("base64");
 }
 
-export function decrypt(payload: string) {
+export function decrypt(payload: string, context: string) {
   const raw = Buffer.from(payload, "base64");
 
   // Ciphertext itself may be empty (GCM is a stream cipher), so the floor is
@@ -50,7 +49,7 @@ export function decrypt(payload: string) {
 
   const decipher = crypto.createDecipheriv(
     "aes-256-gcm",
-    derivedKey(),
+    derivedKey(context),
     iv,
   );
   decipher.setAuthTag(tag);

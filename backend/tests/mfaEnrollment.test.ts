@@ -109,7 +109,7 @@ describe("POST /mfa/enrollment", () => {
     // The column never holds what was shown to the client, but must decrypt
     // back to it — enrollment has to be recoverable to verify later codes.
     expect(user.totp_secret).not.toBe(response.body.secret);
-    expect(decrypt(user.totp_secret!)).toBe(response.body.secret);
+    expect(decrypt(user.totp_secret!, "kauth:mfa-totp")).toBe(response.body.secret);
     expect(user.mfa_enrolled_at).toBeNull();
 
     const event = await prisma.securityEvent.findFirstOrThrow({
