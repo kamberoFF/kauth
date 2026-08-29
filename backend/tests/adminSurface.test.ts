@@ -167,7 +167,10 @@ describe("staff cross-project session operations", () => {
     const event = await prisma.securityEvent.findFirstOrThrow({
       where: { event_type: "SESSION_REVOKED", session_id: sessionId },
     });
-    expect(event.metadata).toMatchObject({ actor_user_id: staff.userId });
+    expect(event.metadata).toMatchObject({
+      actor: "staff",
+      actor_user_id: staff.userId,
+    });
   });
 
   it("404s revoking an already-revoked session", async () => {

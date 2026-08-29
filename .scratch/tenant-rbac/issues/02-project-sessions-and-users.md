@@ -1,6 +1,6 @@
 # 02 — Project sessions & users: owner surface + secret-key session list
 
-Status: ready-for-agent
+Status: done
 
 **What to build:** a Project owner can see and manage the sessions and users
 inside their own Project from their developer session, and a Project's secret
@@ -60,12 +60,48 @@ key gains a Project-wide session list.
 **Blocked by:** 01 (contract bump, `lib/pagination.ts`, shared serialize
 layer)
 
-- [ ] `GET /projects/:projectId/sessions` returns the owner's Project's `ACTIVE` sessions in the documented projection; a revoked session does not appear; `?userId=` filters; pagination round-trips via `nextCursor`
-- [ ] `GET /projects/:projectId/sessions/:sessionId` returns one session scoped to the Project; malformed id → `400`; miss or cross-Project id → `404`
-- [ ] `DELETE /projects/:projectId/sessions/:sessionId` revokes an `ACTIVE` session (`revoked_reason = "owner_revoked"`) and writes one `SESSION_REVOKED` event with the owner as actor; a second `DELETE` → `404`; a `DELETE` of another Project's session → `404`
-- [ ] `GET /projects/:projectId/users` lists the Project's users in the documented shape via the shared serializer
-- [ ] Owner of Project A hits every route with Project B's id → `404` on all of them (mutation-checked against the `owner_id` filter)
-- [ ] `GET /project/sessions` returns the same shape with a valid secret key, scoped to the key's Project; another Project's sessions never appear (mutation-checked against the `project_id` filter)
-- [ ] A request bearing only `x-api-key` (no session) to `DELETE /projects/:projectId/sessions/:sessionId` and to `PATCH /projects/:projectId` → `401`
-- [ ] `SESSION_REVOKED` metadata uses the normalized `actor` discriminator across all call sites and their tests are updated
-- [ ] `bun test`, `bun run typecheck`, `bun run lint` all green
+- [x] `GET /projects/:projectId/sessions` returns the owner's Project's `ACTIVE` sessions in the documented projection; a revoked session does not appear; `?userId=` filters; pagination round-trips via `nextCursor`
+- [x] `GET /projects/:projectId/sessions/:sessionId` returns one session scoped to the Project; malformed id → `400`; miss or cross-Project id → `404`
+- [x] `DELETE /projects/:projectId/sessions/:sessionId` revokes an `ACTIVE` session (`revoked_reason = "owner_revoked"`) and writes one `SESSION_REVOKED` event with the owner as actor; a second `DELETE` → `404`; a `DELETE` of another Project's session → `404`
+- [x] `GET /projects/:projectId/users` lists the Project's users in the documented shape via the shared serializer
+- [x] Owner of Project A hits every route with Project B's id → `404` on all of them (mutation-checked against the `owner_id` filter)
+- [x] `GET /project/sessions` returns the same shape with a valid secret key, scoped to the key's Project; another Project's sessions never appear (mutation-checked against the `project_id` filter)
+- [x] A request bearing only `x-api-key` (no session) to `DELETE /projects/:projectId/sessions/:sessionId` and to `PATCH /projects/:projectId` → `401`
+- [x] `SESSION_REVOKED` metadata uses the normalized `actor` discriminator across all call sites and their tests are updated
+- [x] `bun test`, `bun run typecheck`, `bun run lint` all green
+
+## Implementation comments
+
+- **Actor normalization: did the full cleanup** (the preferred option, not the
+  fallback). `SESSION_REVOKED` metadata is now `{ actor, ... }` at every call
+  site: `{ actor: "self" }` (`controllers/sessions.ts`),
+  `{ actor: "staff", actor_user_id }` (`controllers/admin.ts`),
+  `{ actor: "api_key", api_key_id }` (`controllers/projectAccess.ts`, renamed
+  from the old `{ apiKeyId }`), `{ actor: "owner", actor_user_id }` (new owner
+  path). The discriminated union `SessionRevocationActor` lives in
+  `lib/securityEvents.ts`. Tests updated in `adminSurface`, `sessions`,
+  `auditLog`, `apiKeyAuth`.
+- **Shared layer.** `lib/projectManagement.ts` grew `listProjectUsers`,
+  `listProjectSessions`, `getProjectSession`, and `revokeProjectSession` (the
+  owner/secret-key revoke primitive, differing only in `reason` + actor).
+  `controllers/projectAccess.ts` and `controllers/admin.ts:listProjectUsers`
+  were refactored onto these — no divergent projection copies.
+- **`requireApiKeyId`** added to `utils/requestGuards.ts` so the `api_key`
+  actor id is a checked `string`, not `string | undefined`.
+- Both cross-Project isolation boundaries were mutation-checked: dropping the
+  `owner_id` filter and dropping the `project_id` filter each make the
+  relevant test fail.
+- No contract bump — ticket 01 already put `0.7.0` in place; verified
+  `contractVersion.test.ts` still green.
+
+### Post-`/code-review` cleanup
+
+- `recordSessionRevoked(client, { userId, sessionId, projectId, actor,
+  context })` added to `lib/securityEvents.ts` — the single writer of a
+  `SESSION_REVOKED` row, so the four surfaces cannot drift and `actor` is
+  type-checked at every call site (the review flagged the write shape as the
+  third DRY case and the union as declared-but-unenforced).
+- `revokeProjectSession` (lib) dropped its `reason` param; `revoked_reason` is
+  now derived from `actor.actor` via `REVOCATION_REASON_BY_ACTOR`, so a caller
+  can't set the column and the audit metadata out of lockstep.
+- `ManagementListQuery` now `extends SessionListQuery`.

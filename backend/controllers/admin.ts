@@ -6,8 +6,8 @@ import { roleChangeSchema } from "../lib/validation";
 import { appError } from "../utils/errors";
 import { requireUserId } from "../utils/requestGuards";
 import { revokeSessions } from "../lib/sessions";
-import { recordSecurityEvent, requestContext } from "../lib/securityEvents";
-import { USER_LIST_SELECT, serializeUser } from "../lib/projectManagement";
+import { recordSecurityEvent, recordSessionRevoked, requestContext } from "../lib/securityEvents";
+import { listProjectUsers as listUsersInProject } from "../lib/projectManagement";
 
 /**
  * Platform-staff controllers (routes/admin.ts). Every query is deliberately
@@ -70,13 +70,7 @@ export const listProjectUsers: RequestHandler = async (req, res, next) => {
       return next(appError(404, "Project not found", "project_not_found"));
     }
 
-    const users = await prisma.user.findMany({
-      where: { project_id: projectId },
-      orderBy: { created_at: "asc" },
-      select: USER_LIST_SELECT,
-    });
-
-    res.json({ users: users.map(serializeUser) });
+    res.json(await listUsersInProject(projectId));
   } catch (error) {
     next(error);
   }
@@ -143,17 +137,13 @@ export const revokeSession: RequestHandler = async (req, res, next) => {
     await prisma.$transaction(async (tx) => {
       await revokeSessions(tx, { id: session.id }, "staff_revoked");
 
-      await recordSecurityEvent(
-        {
-          type: "SESSION_REVOKED",
-          userId: session.user_id,
-          sessionId: session.id,
-          projectId: session.project_id,
-          ...requestContext(req),
-          metadata: { actor_user_id: actorUserId },
-        },
-        tx,
-      );
+      await recordSessionRevoked(tx, {
+        userId: session.user_id,
+        sessionId: session.id,
+        projectId: session.project_id,
+        actor: { actor: "staff", actor_user_id: actorUserId },
+        context: requestContext(req),
+      });
     });
 
     res.json({ message: "Session revoked" });

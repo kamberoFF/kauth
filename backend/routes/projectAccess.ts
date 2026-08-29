@@ -4,7 +4,10 @@ import {
   revokeProjectSession,
   verifyProjectSession,
 } from "../controllers/projectAccess";
-import { listProjectEventsHandler } from "../controllers/projectManagement";
+import {
+  listProjectEventsHandler,
+  listProjectSessionsHandler,
+} from "../controllers/projectManagement";
 import { requireSecretKey } from "../middlewares/apiKey";
 
 const router = Router();
@@ -13,6 +16,9 @@ const router = Router();
 // the key itself resolves the project, the same way refresh derives project
 // from the stored token row rather than a client-supplied header.
 router.get("/project/users", requireSecretKey, listProjectUsers);
+// The list and the by-id lookup are distinct Express routes and coexist —
+// `/project/sessions` never matches the `:sessionId` pattern.
+router.get("/project/sessions", requireSecretKey, listProjectSessionsHandler);
 router.get(
   "/project/sessions/:sessionId",
   requireSecretKey,

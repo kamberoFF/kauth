@@ -26,6 +26,18 @@ export function requireUserId(req: Request): string {
   return req.userId;
 }
 
+export function requireApiKeyId(req: Request): string {
+  if (!req.apiKeyId) {
+    throw appError(
+      500,
+      "API key id missing. Did you forget requireApiKey middleware?",
+      "api_key_context_missing",
+    );
+  }
+
+  return req.apiKeyId;
+}
+
 export function requireProjectId(req: Request): string {
   if (!req.projectId) {
     throw appError(

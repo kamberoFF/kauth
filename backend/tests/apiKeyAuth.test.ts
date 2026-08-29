@@ -181,6 +181,10 @@ describe("secret key", () => {
     });
     expect(event).not.toBeNull();
     expect(event!.user_id).toBe(registered.body.user.id);
+    expect(event!.metadata).toMatchObject({ actor: "api_key" });
+    expect(
+      (event!.metadata as Record<string, unknown>).api_key_id,
+    ).toBeString();
   });
 
   it("is rejected from project-management actions", async () => {

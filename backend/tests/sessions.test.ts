@@ -232,6 +232,7 @@ describe("DELETE /sessions/:sessionId", () => {
     });
     expect(event).not.toBeNull();
     expect(event!.severity).toBe("WARNING");
+    expect(event!.metadata).toMatchObject({ actor: "self" });
 
     // second is unused beyond ensuring the target row actually exists.
     expect(second.status).toBe(200);

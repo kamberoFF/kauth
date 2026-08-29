@@ -55,6 +55,18 @@ const SEVERITY: Record<SecurityEventType, SecurityEventSeverity> = {
   REGISTER_DUPLICATE_EMAIL: SecurityEventSeverity.WARNING,
 };
 
+/**
+ * `SESSION_REVOKED` is reachable from four surfaces, and the Project events
+ * endpoint (owner + secret key) needs to show which one cut a given session.
+ * Every call site writes this discriminator into `metadata` — `actor` plus the
+ * id that identifies the actor on that surface.
+ */
+export type SessionRevocationActor =
+  | { actor: "self" }
+  | { actor: "owner"; actor_user_id: string }
+  | { actor: "staff"; actor_user_id: string }
+  | { actor: "api_key"; api_key_id: string };
+
 export interface SecurityEventInput {
   type: SecurityEventType;
   userId?: string | null;
@@ -97,6 +109,34 @@ export async function recordSecurityEvent(
       metadata: input.metadata,
     },
   });
+}
+
+/**
+ * The one place a `SESSION_REVOKED` row is written, so the four revoke
+ * surfaces (self / owner / staff / api_key) cannot drift apart on shape and
+ * the `actor` discriminator is type-checked at every call site.
+ */
+export async function recordSessionRevoked(
+  client: EventClient,
+  input: {
+    userId: string | null;
+    sessionId: string;
+    projectId: string | null;
+    actor: SessionRevocationActor;
+    context: { ip: string | null; userAgent: string | null };
+  },
+) {
+  await recordSecurityEvent(
+    {
+      type: "SESSION_REVOKED",
+      userId: input.userId,
+      sessionId: input.sessionId,
+      projectId: input.projectId,
+      ...input.context,
+      metadata: input.actor,
+    },
+    client,
+  );
 }
 
 /**

@@ -6,7 +6,13 @@ import {
   listApiKeys,
   revokeApiKey,
 } from "../controllers/apiKeys";
-import { listProjectEventsHandler } from "../controllers/projectManagement";
+import {
+  getProjectSessionHandler,
+  listProjectEventsHandler,
+  listProjectSessionsHandler,
+  listProjectUsersHandler,
+  revokeProjectSessionHandler,
+} from "../controllers/projectManagement";
 import { requireAuth } from "../middlewares/auth";
 import { requireProjectOwnership } from "../middlewares/projectOwnership";
 
@@ -59,6 +65,30 @@ router.get(
   requireAuth,
   requireProjectOwnership,
   listProjectEventsHandler,
+);
+router.get(
+  "/projects/:projectId/users",
+  requireAuth,
+  requireProjectOwnership,
+  listProjectUsersHandler,
+);
+router.get(
+  "/projects/:projectId/sessions",
+  requireAuth,
+  requireProjectOwnership,
+  listProjectSessionsHandler,
+);
+router.get(
+  "/projects/:projectId/sessions/:sessionId",
+  requireAuth,
+  requireProjectOwnership,
+  getProjectSessionHandler,
+);
+router.delete(
+  "/projects/:projectId/sessions/:sessionId",
+  requireAuth,
+  requireProjectOwnership,
+  revokeProjectSessionHandler,
 );
 
 export default router;

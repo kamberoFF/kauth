@@ -137,6 +137,7 @@ describe("security event log", () => {
     expect(revoked.severity).toBe("WARNING");
     expect(revoked.session_id).toBe(target.id);
     expect(revoked.project_id).toBe(project.id);
+    expect(revoked.metadata).toMatchObject({ actor: "self" });
   });
 
   it("records an account unlink", async () => {

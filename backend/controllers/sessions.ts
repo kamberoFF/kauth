@@ -5,7 +5,7 @@ import { requireProjectId, requireUserId } from "../utils/requestGuards";
 import { UUID_REGEX } from "../constants/regex";
 import { revokeSessions } from "../lib/sessions";
 import { clearAuthCookies } from "../lib/tokenTransport";
-import { recordSecurityEvent, requestContext } from "../lib/securityEvents";
+import { recordSessionRevoked, requestContext } from "../lib/securityEvents";
 
 export const listSessions: RequestHandler = async (req, res, next) => {
   try {
@@ -93,16 +93,13 @@ export const revokeSession: RequestHandler = async (req, res, next) => {
         throw appError(404, "Session not found", "session_not_found");
       }
 
-      await recordSecurityEvent(
-        {
-          type: "SESSION_REVOKED",
-          userId,
-          sessionId: ids[0],
-          projectId,
-          ...context,
-        },
-        tx,
-      );
+      await recordSessionRevoked(tx, {
+        userId,
+        sessionId: ids[0]!,
+        projectId,
+        actor: { actor: "self" },
+        context,
+      });
 
       return ids;
     });
