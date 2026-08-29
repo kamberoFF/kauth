@@ -4,6 +4,7 @@ import {
   revokeProjectSession,
   verifyProjectSession,
 } from "../controllers/projectAccess";
+import { listProjectEventsHandler } from "../controllers/projectManagement";
 import { requireSecretKey } from "../middlewares/apiKey";
 
 const router = Router();
@@ -22,5 +23,10 @@ router.delete(
   requireSecretKey,
   revokeProjectSession,
 );
+
+// The Project's own security-event log, for a downstream backend that wants to
+// stream it into its own tooling. Scoped to the key's Project, never a
+// client-supplied id — same query and shape as the owner route.
+router.get("/project/events", requireSecretKey, listProjectEventsHandler);
 
 export default router;

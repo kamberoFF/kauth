@@ -1,6 +1,6 @@
 {
   "name": "@kauth/backend-sdk",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Server-only kauth SDK: session verification, user listing, and session revocation, authenticated with a project's secret key.",
   "type": "module",
   "main": "./src/index.ts",

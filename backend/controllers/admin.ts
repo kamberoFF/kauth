@@ -7,6 +7,7 @@ import { appError } from "../utils/errors";
 import { requireUserId } from "../utils/requestGuards";
 import { revokeSessions } from "../lib/sessions";
 import { recordSecurityEvent, requestContext } from "../lib/securityEvents";
+import { USER_LIST_SELECT, serializeUser } from "../lib/projectManagement";
 
 /**
  * Platform-staff controllers (routes/admin.ts). Every query is deliberately
@@ -38,15 +39,6 @@ export const listProjects: RequestHandler = async (_req, res, next) => {
   }
 };
 
-const USER_LIST_SELECT = {
-  id: true,
-  email: true,
-  username: true,
-  email_verified: true,
-  role: true,
-  created_at: true,
-} as const;
-
 /**
  * Shared guard for the surface's path parameters: a malformed UUID is a
  * malformed request (400), never a lookup miss (404) — the same split every
@@ -63,24 +55,6 @@ function uuidParamOr400(
   }
 
   return id;
-}
-
-function serializeUser(user: {
-  id: string;
-  email: string;
-  username: string | null;
-  email_verified: boolean;
-  role: "USER" | "ADMIN";
-  created_at: Date;
-}) {
-  return {
-    id: user.id,
-    email: user.email,
-    username: user.username,
-    emailVerified: user.email_verified,
-    role: user.role,
-    createdAt: user.created_at,
-  };
 }
 
 export const listProjectUsers: RequestHandler = async (req, res, next) => {

@@ -5,6 +5,7 @@ import { requireProjectId } from "../utils/requestGuards";
 import { UUID_REGEX } from "../constants/regex";
 import { revokeSessions } from "../lib/sessions";
 import { recordSecurityEvent, requestContext } from "../lib/securityEvents";
+import { USER_LIST_SELECT, serializeUser } from "../lib/projectManagement";
 
 /**
  * Secret-key-scoped endpoints: the key resolves the project, never a user
@@ -18,26 +19,10 @@ export const listProjectUsers: RequestHandler = async (req, res, next) => {
     const users = await prisma.user.findMany({
       where: { project_id: projectId },
       orderBy: { created_at: "asc" },
-      select: {
-        id: true,
-        email: true,
-        username: true,
-        email_verified: true,
-        role: true,
-        created_at: true,
-      },
+      select: USER_LIST_SELECT,
     });
 
-    res.json({
-      users: users.map((user) => ({
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        emailVerified: user.email_verified,
-        role: user.role,
-        createdAt: user.created_at,
-      })),
-    });
+    res.json({ users: users.map(serializeUser) });
   } catch (error) {
     next(error);
   }
