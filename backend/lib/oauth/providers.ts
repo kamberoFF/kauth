@@ -2,6 +2,7 @@ import { GitHub, Google, type OAuth2Tokens } from "arctic";
 import config from "../../config";
 import { prisma } from "../prisma";
 import { decrypt } from "../cryptoBox";
+import type { ProjectOAuthCredential } from "../../generated/prisma/client";
 
 /**
  * Derivation namespace for a Project's stored `client_secret` (ADR 0006's
@@ -223,6 +224,21 @@ export function unregisterOAuthProviderFactory(id: string) {
   factories.delete(id);
 }
 
+/** Whether `id` names a provider kauth can build a client for at all. */
+export function hasOAuthProviderFactory(id: string) {
+  return factories.has(id);
+}
+
+/**
+ * The built-in provider ids — every provider with a registered factory,
+ * whether or not this instance configured env credentials for it. The owner
+ * management listing iterates this so a Project can be shown a provider it
+ * could adopt even when the instance offers none.
+ */
+export function oauthProviderFactoryIds() {
+  return [...factories.keys()];
+}
+
 export function getOAuthProvider(id: string) {
   return providers.get(id);
 }
@@ -231,13 +247,75 @@ export function enabledProviders() {
   return [...providers.keys()];
 }
 
+/** The columns the owner listing reads off a credential row (it shows `client_id`). */
+type CredentialFacts = Pick<
+  ProjectOAuthCredential,
+  "provider_id" | "client_id" | "mode" | "client_secret_enc"
+>;
+
+/**
+ * An `OVERRIDE` row that can actually become a client: it carries a secret and
+ * there is a factory to build it. The single predicate every consumer applies,
+ * so `resolveProjectProvider`, `enabledProvidersForProject`, and the owner
+ * listing cannot drift on what "configured" means.
+ */
+function overrideIsUsable(
+  row: Pick<ProjectOAuthCredential, "provider_id" | "mode" | "client_secret_enc">,
+) {
+  return (
+    row.mode === "OVERRIDE" &&
+    row.client_secret_enc !== null &&
+    factories.has(row.provider_id)
+  );
+}
+
+export interface ProjectOAuthProviderView {
+  provider: string;
+  source: "instance" | "project";
+  enabled: boolean;
+  clientId: string | null;
+}
+
+/**
+ * How `providerId` resolves for a Project, as an owner sees it: a `DISABLED`
+ * row suppresses it; an `OVERRIDE` row shows the Project's own `client_id` and
+ * counts as enabled only when a client could be built from it; no row means the
+ * instance default (enabled iff this instance configured one). The `client_id`
+ * is surfaced only for the Project's own override — never the operator's, never
+ * the stored secret.
+ */
+export function describeProjectProvider(
+  providerId: string,
+  row: CredentialFacts | undefined,
+): ProjectOAuthProviderView {
+  if (!row) {
+    return {
+      provider: providerId,
+      source: "instance",
+      enabled: getOAuthProvider(providerId) !== undefined,
+      clientId: null,
+    };
+  }
+
+  if (row.mode === "DISABLED") {
+    return { provider: providerId, source: "project", enabled: false, clientId: null };
+  }
+
+  return {
+    provider: providerId,
+    source: "project",
+    enabled: overrideIsUsable(row),
+    clientId: row.client_id,
+  };
+}
+
 /**
  * The provider a given Project's OAuth flow should use for `providerId`:
  *
- *  - an `OVERRIDE` row  → built via that provider's factory with the Project's
- *    decrypted credentials;
- *  - a `DISABLED` row   → `undefined` (the Project suppressed this provider);
- *  - no row             → the instance default;
+ *  - a usable `OVERRIDE` row → built via that provider's factory with the
+ *    Project's decrypted credentials;
+ *  - a `DISABLED` row or an unbuildable override → `undefined`;
+ *  - no row → the instance default;
  *  - nothing configured → `undefined`.
  *
  * Constructed per request, never cached: an OAuth start is rare, a `decrypt` +
@@ -261,26 +339,24 @@ export async function resolveProjectProvider(
     return getOAuthProvider(providerId);
   }
 
-  if (credential.mode === "DISABLED" || credential.client_secret_enc === null) {
+  if (!overrideIsUsable(credential)) {
     return undefined;
   }
 
-  const factory = factories.get(providerId);
-
-  if (!factory) {
-    return undefined;
-  }
-
-  return factory({
+  // Guaranteed non-null / present by overrideIsUsable.
+  return factories.get(providerId)!({
     clientId: credential.client_id,
-    clientSecret: decrypt(credential.client_secret_enc, PROJECT_OAUTH_CONTEXT),
+    clientSecret: decrypt(credential.client_secret_enc!, PROJECT_OAUTH_CONTEXT),
   });
 }
 
 /**
- * The provider ids a given Project's login page should offer: the instance
- * default set, minus the Project's `DISABLED` rows, plus its `OVERRIDE` rows
- * for providers the instance never configured.
+ * The provider ids a given Project's login page should offer. A Project row
+ * shadows the instance default for that provider entirely — exactly as
+ * `resolveProjectProvider` treats it — so the two never disagree: a provider is
+ * offered iff it has a usable `OVERRIDE` row, or no row at all and an instance
+ * default. A `DISABLED` row (or an override with no buildable client) offers
+ * nothing.
  */
 export async function enabledProvidersForProject(
   projectId: string,
@@ -290,23 +366,14 @@ export async function enabledProvidersForProject(
     select: { provider_id: true, mode: true, client_secret_enc: true },
   });
 
-  const disabled = new Set(
-    rows.filter((row) => row.mode === "DISABLED").map((row) => row.provider_id),
-  );
+  const configured = new Set(rows.map((row) => row.provider_id));
 
   const effective = new Set(
-    enabledProviders().filter((id) => !disabled.has(id)),
+    enabledProviders().filter((id) => !configured.has(id)),
   );
 
-  // Same rule `resolveProjectProvider` applies, so the list never advertises a
-  // provider whose start would 404: an OVERRIDE only counts if it can actually
-  // be built (a factory exists and the secret is present).
   for (const row of rows) {
-    if (
-      row.mode === "OVERRIDE" &&
-      row.client_secret_enc !== null &&
-      factories.has(row.provider_id)
-    ) {
+    if (overrideIsUsable(row)) {
       effective.add(row.provider_id);
     }
   }

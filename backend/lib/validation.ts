@@ -86,6 +86,24 @@ export const issueApiKeySchema = z.object({
 });
 
 /**
+ * A Provider-app write is exactly one of two intents — configure an override
+ * or disable the provider — and nothing else. `.strict()` on each arm is what
+ * rejects a half-filled `{ clientId }`, a `{ disabled: false }`, or a body
+ * that smuggles both, so "neither shape" is a 400 validation, never a
+ * partially-applied write. Shape only, no length bounds: the provider, not
+ * kauth, defines what a valid client id or secret looks like.
+ */
+export const projectOAuthCredentialSchema = z.union([
+  z
+    .object({
+      clientId: z.string().min(1),
+      clientSecret: z.string().min(1),
+    })
+    .strict(),
+  z.object({ disabled: z.literal(true) }).strict(),
+]);
+
+/**
  * Shape only: a TOTP code that fails the regex check inside matchTotpStep is
  * a *wrong* code (401), not a validation failure — the boundary between the
  * two is what keeps malformed input and bad credentials distinguishable.

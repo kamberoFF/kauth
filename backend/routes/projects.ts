@@ -13,6 +13,11 @@ import {
   listProjectUsersHandler,
   revokeProjectSessionHandler,
 } from "../controllers/projectManagement";
+import {
+  deleteProjectOAuthProvider,
+  listProjectOAuthProviders,
+  putProjectOAuthProvider,
+} from "../controllers/projectOAuthProviders";
 import { requireAuth } from "../middlewares/auth";
 import { requireProjectOwnership } from "../middlewares/projectOwnership";
 
@@ -89,6 +94,27 @@ router.delete(
   requireAuth,
   requireProjectOwnership,
   revokeProjectSessionHandler,
+);
+
+// Per-Project OAuth Provider apps (ADR 0009) — owner session only, same
+// never-reachable-by-a-key rule as the routes above.
+router.get(
+  "/projects/:projectId/oauth/providers",
+  requireAuth,
+  requireProjectOwnership,
+  listProjectOAuthProviders,
+);
+router.put(
+  "/projects/:projectId/oauth/providers/:provider",
+  requireAuth,
+  requireProjectOwnership,
+  putProjectOAuthProvider,
+);
+router.delete(
+  "/projects/:projectId/oauth/providers/:provider",
+  requireAuth,
+  requireProjectOwnership,
+  deleteProjectOAuthProvider,
 );
 
 export default router;
