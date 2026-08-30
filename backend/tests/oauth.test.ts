@@ -14,6 +14,7 @@ import {
   unregisterOAuthProvider,
   type OAuthProfile,
 } from "../lib/oauth/providers";
+import { signState } from "../lib/oauthState";
 
 const PROVIDER_ID = "stub";
 const VALID_CODE = "valid-authorization-code";
@@ -144,6 +145,9 @@ describe("authorization redirect", () => {
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toContain("provider.example");
     expect(cookieHeader(response)).toContain("kauth_oauth_state=");
+    // The project id rides inside the signed state now, not its own cookie.
+    expect(cookieHeader(response)).not.toContain("kauth_oauth_project");
+    expect(stateFrom(response).split(".")).toHaveLength(3);
   });
 
   // The x-project-id header path (middlewares/project.ts) trims before
@@ -180,30 +184,78 @@ describe("callback", () => {
     expect(result.code).toBeNull();
   });
 
-  it("drops audit attribution for a malformed project cookie even when an earlier check fails first", async () => {
-    const { cookie } = await startFlow();
-    const tamperedCookie = cookie.replace(
-      `kauth_oauth_project=${project.id}`,
-      "kauth_oauth_project=not-a-uuid",
-    );
+  it("rejects a state whose HMAC is garbage even when it echoes the cookie", async () => {
+    // Attacker controls both the cookie jar and the returned param, so
+    // byte-for-byte equality alone is not enough — the HMAC must verify too.
+    const forged = `${project.id}.${project.id}.deadbeef`;
 
-    // state_mismatch fires before the project-check line in the function
-    // body, but project-id resolution now runs up front regardless of which
-    // check ends up failing.
     const response = await api(
       "GET",
-      `/oauth/${PROVIDER_ID}/callback?code=${VALID_CODE}&state=attacker-supplied-state`,
-      { redirect: "manual", headers: { cookie: tamperedCookie } },
+      `/oauth/${PROVIDER_ID}/callback?code=${VALID_CODE}&state=${encodeURIComponent(forged)}`,
+      {
+        redirect: "manual",
+        headers: { cookie: `kauth_oauth_state=${encodeURIComponent(forged)}` },
+      },
     );
 
     const location = new URL(response.headers.get("location") ?? "");
     expect(location.searchParams.get("error")).toBe("state_mismatch");
+    expect(location.searchParams.get("code")).toBeNull();
+    expect(await prisma.user.count()).toBe(0);
+  });
+
+  it("rejects a validly-signed state re-minted for a different project", async () => {
+    const other = await createTestProject();
+    const { cookie } = await startFlow();
+
+    // Valid HMAC, but for another project — so it cannot equal this flow's
+    // kauth_oauth_state cookie. Mutation: dropping the byte-for-byte cookie
+    // check, or reading a project id from anywhere but the verified state,
+    // lets this through.
+    const crossState = signState(other.id);
+
+    const response = await api(
+      "GET",
+      `/oauth/${PROVIDER_ID}/callback?code=${VALID_CODE}&state=${encodeURIComponent(crossState)}`,
+      { redirect: "manual", headers: { cookie } },
+    );
+
+    const location = new URL(response.headers.get("location") ?? "");
+    expect(location.searchParams.get("error")).toBe("state_mismatch");
+    expect(await prisma.user.count()).toBe(0);
 
     const event = await prisma.securityEvent.findFirstOrThrow({
       where: { event_type: "OAUTH_LOGIN_FAILED" },
     });
-    expect(event.project_id).toBeNull();
     expect(event.metadata).toMatchObject({ reason: "state_mismatch" });
+    // The state's HMAC verifies for `other`, so the failure attributes there
+    // (spec allows "the state's Project, or null"); it must never land on the
+    // project whose flow was actually interrupted.
+    expect(event.project_id).toBe(other.id);
+  });
+
+  it("takes the project from the signed state, not a stray project cookie", async () => {
+    const victim = await createTestProject();
+    const { state, cookie } = await startFlow();
+
+    // A leftover / injected kauth_oauth_project cookie must have no effect:
+    // the id comes from the verified state alone. Mutation: re-introducing a
+    // project-cookie read routes this sign-in into the victim project.
+    const callback = await api(
+      "GET",
+      `/oauth/${PROVIDER_ID}/callback?code=${VALID_CODE}&state=${encodeURIComponent(state)}`,
+      {
+        redirect: "manual",
+        headers: { cookie: `${cookie}; kauth_oauth_project=${victim.id}` },
+      },
+    );
+
+    expect(new URL(callback.headers.get("location") ?? "").searchParams.get("code")).toBeString();
+
+    expect(await prisma.user.count({ where: { project_id: victim.id } })).toBe(0);
+    expect(
+      await prisma.user.count({ where: { project_id: project.id } }),
+    ).toBe(1);
   });
 
   it("rejects a callback with no state cookie at all", async () => {
@@ -234,7 +286,7 @@ describe("callback", () => {
     const { cookie, state } = await startFlow();
 
     // req.query.error is attacker/provider-controlled and is checked before
-    // any cookie validation runs - attribution must not be driven by
+    // the state validation runs - attribution must not be driven by
     // pattern-matching this string against resolveProjectIdOrThrow's own
     // failure codes.
     const response = await api(
@@ -254,30 +306,7 @@ describe("callback", () => {
     expect(event.project_id).toBe(project.id);
   });
 
-  it("drops audit attribution rather than a silently-failed insert when the project cookie is malformed", async () => {
-    const { state, cookie } = await startFlow();
-    const tamperedCookie = cookie.replace(
-      `kauth_oauth_project=${project.id}`,
-      "kauth_oauth_project=not-a-uuid",
-    );
-    expect(tamperedCookie).not.toBe(cookie);
-
-    const response = await api(
-      "GET",
-      `/oauth/${PROVIDER_ID}/callback?code=${VALID_CODE}&state=${state}`,
-      { redirect: "manual", headers: { cookie: tamperedCookie } },
-    );
-
-    const location = new URL(response.headers.get("location") ?? "");
-    expect(location.searchParams.get("error")).toBe("project_id_invalid");
-
-    const event = await prisma.securityEvent.findFirstOrThrow({
-      where: { event_type: "OAUTH_LOGIN_FAILED" },
-    });
-    expect(event.project_id).toBeNull();
-  });
-
-  it("re-validates the project cookie rather than trusting its mere presence", async () => {
+  it("re-validates the project in the signed state rather than trusting its signature alone", async () => {
     const { state, cookie } = await startFlow();
 
     // Safe to delete directly: no user exists under this project yet, so

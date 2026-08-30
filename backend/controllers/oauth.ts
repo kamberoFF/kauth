@@ -1,5 +1,5 @@
 import { type Request, type Response, type RequestHandler } from "express";
-import { generateCodeVerifier, generateState, type OAuth2Tokens } from "arctic";
+import { generateCodeVerifier, type OAuth2Tokens } from "arctic";
 import config from "../config";
 import { prisma } from "../lib/prisma";
 import { appError } from "../utils/errors";
@@ -26,11 +26,11 @@ import {
 import { oauthExchangeSchema } from "../lib/validation";
 import { stampMfaGrace } from "../lib/mfaPolicy";
 import { sendAuthResponse } from "../lib/tokenTransport";
+import { signState, verifyState } from "../lib/oauthState";
 import { logger } from "../lib/logger";
 
 const STATE_COOKIE = "kauth_oauth_state";
 const VERIFIER_COOKIE = "kauth_oauth_verifier";
-const PROJECT_COOKIE = "kauth_oauth_project";
 
 function frontendCallback(params: Record<string, string>) {
   const url = new URL("/oauth/callback", config.frontend_url);
@@ -72,7 +72,8 @@ export const startOAuth: RequestHandler = async (req, res, next) => {
     }
 
     // A redirect flow can't carry X-Project-Id, so the project travels as a
-    // query param instead and rides the same cookie round trip as state/PKCE.
+    // query param on the way out and, HMAC-signed, inside `state` on the way
+    // back — no separate cookie to strip or swap (ADR 0009).
     const projectIdParam =
       typeof req.query.projectId === "string" ? req.query.projectId : undefined;
     const projectId = await resolveProjectIdOrThrow(
@@ -80,11 +81,10 @@ export const startOAuth: RequestHandler = async (req, res, next) => {
       "query parameter: projectId",
     );
 
-    const state = generateState();
+    const state = signState(projectId);
     const codeVerifier = generateCodeVerifier();
 
     res.cookie(STATE_COOKIE, state, oauthCookieOptions);
-    res.cookie(PROJECT_COOKIE, projectId, oauthCookieOptions);
 
     if (provider.usesPkce) {
       res.cookie(VERIFIER_COOKIE, codeVerifier, oauthCookieOptions);
@@ -230,25 +230,35 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
   const providerId = req.params.provider ?? "";
   const provider = getOAuthProvider(providerId);
 
-  const state = readAndClearCookie(req, res, STATE_COOKIE);
+  const stateCookie = readAndClearCookie(req, res, STATE_COOKIE);
   const codeVerifier = readAndClearCookie(req, res, VERIFIER_COOKIE);
-  const projectId = readAndClearCookie(req, res, PROJECT_COOKIE);
 
-  // Resolved once, up front — before any of the checks below, so every
-  // fail() call attributes to a confirmed-valid project id or null, never to
-  // a raw cookie value that might be malformed or reference a since-deleted
-  // project. project_id is a real FK: handing it an invalid id would just
-  // fail the audit INSERT itself, silently dropped by
-  // tryRecordSecurityEvent's catch. The specific failure (if any) is kept
-  // too, so the "this flow can't proceed without a valid project" check
-  // further down still reports its precise reason rather than a generic one.
+  const returnedState =
+    typeof req.query.state === "string" ? req.query.state : undefined;
+
+  // The Project id now travels inside the signed `state`, not a separate
+  // cookie. Resolve it up front — and only from a `state` whose HMAC actually
+  // verifies — so every fail() call below attributes to a confirmed-valid
+  // project id or null, never to an unauthenticated value. project_id is a
+  // real FK: handing the audit INSERT an invalid id would just fail the INSERT
+  // itself, silently dropped by tryRecordSecurityEvent's catch. A tampered or
+  // unsigned `state` yields null attribution and trips the state check below.
+  // The specific resolution failure (if any) is kept so the "can't proceed
+  // without a valid project" check further down reports its precise reason.
+  const verifiedState = returnedState ? verifyState(returnedState) : null;
+
   let attributedProjectId: string | null = null;
   let projectResolutionError: unknown = null;
 
-  try {
-    attributedProjectId = await resolveProjectIdOrThrow(projectId, "project cookie");
-  } catch (error) {
-    projectResolutionError = error;
+  if (verifiedState) {
+    try {
+      attributedProjectId = await resolveProjectIdOrThrow(
+        verifiedState.projectId,
+        "signed state",
+      );
+    } catch (error) {
+      projectResolutionError = error;
+    }
   }
 
   async function fail(reason: string) {
@@ -272,23 +282,24 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
     }
 
     const code = req.query.code;
-    const returnedState = req.query.state;
 
-    if (typeof code !== "string" || typeof returnedState !== "string") {
+    if (typeof code !== "string" || returnedState === undefined) {
       return await fail("invalid_response");
     }
 
-    // The state cookie is what ties this callback to a flow this browser
-    // actually started, which is the CSRF defense for the redirect itself.
-    if (!state || returnedState !== state) {
+    // Two things must hold: `state` echoes the cookie byte-for-byte (the CSRF
+    // binding for the redirect this browser actually started) and its HMAC
+    // verifies (so the projectId carried in it is tamper-evident). Either one
+    // failing is indistinguishable to the caller.
+    if (!stateCookie || returnedState !== stateCookie || !verifiedState) {
       return await fail("state_mismatch");
     }
 
-    // Re-validated rather than trusted on the cookie's mere presence: the
-    // cookie was a real project id when startOAuth set it, but nothing stops
-    // the project it names from having been deleted in the meantime. The
-    // resolution itself already ran, up front — this just surfaces whichever
-    // specific failure it produced (project_id_missing/_invalid/not_found).
+    // Re-validated rather than trusted on a valid signature alone: `state` was
+    // signed for a real project when startOAuth ran, but nothing stops that
+    // project from being deleted in the meantime. The resolution itself
+    // already ran, up front — this just surfaces whichever specific failure it
+    // produced (project_id_missing/_invalid/not_found).
     if (projectResolutionError) {
       throw projectResolutionError;
     }

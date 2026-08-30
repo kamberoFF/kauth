@@ -15,9 +15,11 @@ const TAG_BYTES = 16;
  * Namespaced key derivation: each consumer passes its own context label so it
  * derives a distinct subkey from the shared ENCRYPTION_KEY, and a ciphertext
  * sealed under one context never verifies under another (distinct key + the
- * GCM auth tag). Callers own the label — today only "kauth:mfa-totp".
+ * GCM auth tag). Exported so non-cipher consumers of the same secret — the
+ * signed OAuth `state` HMAC — share the one blast-radius rule (ADR 0006)
+ * structurally rather than by copy-paste.
  */
-function derivedKey(context: string) {
+export function derivedKey(context: string) {
   return crypto
     .createHash("sha256")
     .update(config.encryption_key)
