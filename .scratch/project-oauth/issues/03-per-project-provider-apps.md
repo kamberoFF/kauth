@@ -1,6 +1,6 @@
 # 03 — Per-Project Provider apps: storage, resolution, effective list
 
-Status: ready-for-agent
+Status: done
 
 **What to build:** a Project can bring its own OAuth **Provider app**
 (`CONTEXT.md`) for a built-in provider (google, github). Its credentials are
@@ -64,13 +64,62 @@ that provider.
 `oauthCallback` reads the Project id from verified `state`, and both tickets
 edit `controllers/oauth.ts`)
 
-- [ ] `ProjectOAuthCredential` + `OAuthCredentialMode` exist with the documented shape; migrations apply cleanly and sort after `main`'s latest
-- [ ] Project A with a `stub` `OVERRIDE` (`clientId "A"`) and Project B with its own (`clientId "B"`): `GET /oauth/stub?projectId=A` redirects with A's client id, `?projectId=B` with B's, neither leaks the other
-- [ ] **Mutation check:** dropping the `project_id` filter in the `ProjectOAuthCredential` lookup makes the isolation test fail
-- [ ] Full round trip under Project A's `stub` `OVERRIDE`: session created, and the stub factory's spy was called once with A's decrypted `clientSecret`
-- [ ] A Project with no row runs the full round trip against the instance-default provider (existing `oauth.test.ts` flows still pass)
-- [ ] A `DISABLED` row → `GET /oauth/<provider>?projectId=X` is `404`, a forced callback fails `provider_not_found`, and `GET /oauth/providers?projectId=X` omits it; a pre-existing linked `Account` row for that user+provider is still in the DB
-- [ ] `GET /oauth/providers` with no `projectId` → `400`; malformed → `400`; unknown → `404`; the route is under `oauthLimiter`; a Project with an instance GitHub app + a `google` `OVERRIDE` lists both
-- [ ] `decrypt(row.client_secret_enc, "kauth:project-oauth")` returns the plaintext; `decrypt` under `"kauth:mfa-totp"` throws
-- [ ] `PROJECT_OAUTH_CONFIG_CHANGED` is in the enum with `WARNING` severity; the contract version is `0.7.0` and unchanged by this ticket
-- [ ] `bun test`, `bun run typecheck`, `bun run lint` all green
+- [x] `ProjectOAuthCredential` + `OAuthCredentialMode` exist with the documented shape; migrations apply cleanly and sort after `main`'s latest
+- [x] Project A with a `stub` `OVERRIDE` (`clientId "A"`) and Project B with its own (`clientId "B"`): `GET /oauth/stub?projectId=A` redirects with A's client id, `?projectId=B` with B's, neither leaks the other
+- [x] **Mutation check:** dropping the `project_id` filter in the `ProjectOAuthCredential` lookup makes the isolation test fail
+- [x] Full round trip under Project A's `stub` `OVERRIDE`: session created, and the stub factory's spy was called once with A's decrypted `clientSecret`
+- [x] A Project with no row runs the full round trip against the instance-default provider (existing `oauth.test.ts` flows still pass)
+- [x] A `DISABLED` row → `GET /oauth/<provider>?projectId=X` is `404`, a forced callback fails `provider_not_found`, and `GET /oauth/providers?projectId=X` omits it; a pre-existing linked `Account` row for that user+provider is still in the DB
+- [x] `GET /oauth/providers` with no `projectId` → `400`; malformed → `400`; unknown → `404`; the route is under `oauthLimiter`; a Project with an instance GitHub app + a `google` `OVERRIDE` lists both
+- [x] `decrypt(row.client_secret_enc, "kauth:project-oauth")` returns the plaintext; `decrypt` under `"kauth:mfa-totp"` throws
+- [x] `PROJECT_OAUTH_CONFIG_CHANGED` is in the enum with `WARNING` severity; the contract version is `0.7.0` and unchanged by this ticket
+- [x] `bun test`, `bun run typecheck`, `bun run lint` all green
+
+---
+
+Implemented (`/implement`; `/tdd` seam = the `registerOAuthProviderFactory` hook).
+
+**Schema.** `ProjectOAuthCredential` (`@@unique([project_id, provider_id])`,
+`onDelete: Cascade`, `client_secret_enc String?` null iff `DISABLED`) +
+`enum OAuthCredentialMode { OVERRIDE, DISABLED }` + `Project.oauthCredentials`.
+`PROJECT_OAUTH_CONFIG_CHANGED` added to `SecurityEventType`, `WARNING` in the
+`SEVERITY` map. Two migrations — `20260830120000_add_project_oauth_credentials`
+(enum + table), `20260830120100_add_project_oauth_config_changed_event`
+(`ADD VALUE` alone, its own tx) — both sort after `main`'s `20260829120000`.
+
+**`lib/oauth/providers.ts`.** Factory registry: `factories` map, seeded
+unconditionally with `google`/`github`; the *instance* provider still only
+registers when its env creds are present, so `getOAuthProvider` /
+`enabledProviders` keep meaning "instance default". New
+`registerOAuthProviderFactory` / `unregisterOAuthProviderFactory`,
+`resolveProjectProvider(projectId, providerId)` (OVERRIDE → `factory(...)` with
+`decrypt(enc, "kauth:project-oauth")`; DISABLED / null-secret → `undefined`;
+no row → instance default), `enabledProvidersForProject(projectId)` (instance
+set − DISABLED + OVERRIDE-for-providers-the-instance-lacks). No cache. Exported
+`PROJECT_OAUTH_CONTEXT`.
+
+**`controllers/oauth.ts`.** `listProviders` now async, requires `?projectId=`
+(resolved), returns `enabledProvidersForProject`. `startOAuth` resolves the
+project id first, then `resolveProjectProvider` → `404 provider_not_found`.
+`oauthCallback` resolves the provider *after* the state gate (needs the
+verified project id) → `fail("provider_not_found")` on `undefined`; unused
+`next` param dropped. `routes/oauth.ts`: `/oauth/providers` gains `oauthLimiter`.
+
+**Tests.** New `tests/projectOAuthCredentials.test.ts` (8) — isolation
+(mutation-checked: `findFirst` without the project filter fails it), full
+round trip asserting the decrypted `secret-A` reached `validateAuthorizationCode`,
+inherit path, disable (start 404 / forced-callback fail / discovery omit /
+linked `Account` intact), OVERRIDE-for-uninstanced-provider in the effective
+list, secret-at-rest (ciphertext ≠ plaintext, opens only under
+`kauth:project-oauth`), enum presence. `tests/oauth.test.ts` updated for the
+`?projectId=` requirement on `/oauth/providers` and `/oauth/:provider`.
+Full suite 471 pass / 0 fail; typecheck + lint green. Contract stays `0.7.0`.
+
+Note for ticket 04: `resolveProjectProvider` treats a null `client_secret_enc`
+on an `OVERRIDE` row as `undefined` (defensive) — the write path must always
+pair `OVERRIDE` with a non-null encrypted secret.
+
+Note for ticket 05: `CONTEXT.md`'s **Provider app** term shipped with this
+ticket (the model it names now exists); ADR 0009 draft still says "compare the
+random part" of `state` while the code compares the full string (ticket 02
+note) — reconcile in 05.

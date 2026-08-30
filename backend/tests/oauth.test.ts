@@ -117,17 +117,46 @@ async function completeFlow(overrides: { state?: string; code?: string } = {}) {
 }
 
 describe("provider discovery", () => {
-  it("lists the enabled providers", async () => {
-    const response = await api("GET", "/oauth/providers");
+  it("lists the enabled providers for a project", async () => {
+    const response = await api(
+      "GET",
+      `/oauth/providers?projectId=${project.id}`,
+    );
 
     expect(response.status).toBe(200);
     expect(response.body.providers).toContain(PROVIDER_ID);
   });
 
+  it("requires a projectId", async () => {
+    const response = await api("GET", "/oauth/providers");
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("project_id_missing");
+  });
+
+  it("400s a malformed projectId", async () => {
+    const response = await api("GET", "/oauth/providers?projectId=not-a-uuid");
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("project_id_invalid");
+  });
+
+  it("404s an unknown projectId", async () => {
+    const response = await api(
+      "GET",
+      "/oauth/providers?projectId=00000000-0000-4000-8000-000000000000",
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.body.error.code).toBe("project_not_found");
+  });
+
   it("404s an unknown provider", async () => {
-    const response = await api("GET", "/oauth/nosuchprovider", {
-      redirect: "manual",
-    });
+    const response = await api(
+      "GET",
+      `/oauth/nosuchprovider?projectId=${project.id}`,
+      { redirect: "manual" },
+    );
 
     expect(response.status).toBe(404);
     expect(response.body.error.code).toBe("provider_not_found");

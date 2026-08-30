@@ -50,11 +50,60 @@ model Project {
   securityEvents SecurityEvent[]
   apiKeys        ApiKey[]
 
+  /**
+   * Bring-your-own OAuth Provider apps (ADR 0009). Empty means every social
+   * login for this Project inherits the instance env credentials.
+   */
+  oauthCredentials ProjectOAuthCredential[]
+
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
   @@index([owner_id])
   @@map("projects")
+}
+
+/**
+ * A Project's own OAuth client for a built-in provider (ADR 0009). One row per
+ * (project, provider): an `OVERRIDE` replaces the instance env app for that
+ * Project with the stored `client_id` / encrypted `client_secret_enc`; a
+ * `DISABLED` row suppresses the provider entirely, so the Project's login page
+ * offers neither its own app nor the instance's. No row at all means inherit.
+ */
+model ProjectOAuthCredential {
+  id String @id @default(uuid()) @db.Uuid
+
+  project    Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  project_id String  @db.Uuid
+
+  /**
+   * String, not an enum, to match the string-keyed provider registry and to
+   * leave room for a `stub` provider id in tests. "google" | "github" today.
+   */
+  provider_id String
+
+  /**
+   * Plaintext on purpose: the client id is public — it rides in every
+   * authorization redirect URL — and the owner listing needs to show it.
+   */
+  client_id String
+
+  /**
+   * `lib/cryptoBox.ts` ciphertext under the "kauth:project-oauth" derivation
+   * context (ADR 0006's namespaced key rule). Null iff `mode = DISABLED`.
+   * Never returned by any endpoint, never put in security-event metadata,
+   * never logged.
+   */
+  client_secret_enc String?
+
+  mode OAuthCredentialMode
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@unique([project_id, provider_id])
+  @@index([project_id])
+  @@map("project_oauth_credentials")
 }
 
 model User {
@@ -481,6 +530,11 @@ enum ApiKeyType {
   SECRET
 }
 
+enum OAuthCredentialMode {
+  OVERRIDE
+  DISABLED
+}
+
 enum SecurityEventType {
   USER_REGISTERED
   LOGIN_SUCCESS
@@ -530,6 +584,15 @@ enum SecurityEventType {
    * address is visible. Attributed to the existing user.
    */
   REGISTER_DUPLICATE_EMAIL
+
+  /**
+   * A Project owner changed a Provider app (per-project OAuth credentials,
+   * ADR 0009): configured an override, disabled a provider, or cleared a row
+   * back to inheriting the instance app. WARNING like the other project-config
+   * changes; metadata carries the provider and the action, never the secret
+   * or even the client_id.
+   */
+  PROJECT_OAUTH_CONFIG_CHANGED
 }
 
 enum SecurityEventSeverity {

@@ -10,8 +10,10 @@ import { oauthLimiter } from "../middlewares/rateLimit";
 
 const router = Router();
 
-// Declared before the :provider route so the literal path wins.
-router.get("/oauth/providers", listProviders);
+// Declared before the :provider route so the literal path wins. Under
+// oauthLimiter now that it does a per-Project DB lookup on an unauthenticated
+// endpoint.
+router.get("/oauth/providers", oauthLimiter, listProviders);
 
 // resolveDevice, not requireDevice: the callback redirect cannot carry a
 // device id and a first-time browser has no kauth_device cookie yet, so the

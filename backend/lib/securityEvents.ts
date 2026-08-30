@@ -53,6 +53,11 @@ const SEVERITY: Record<SecurityEventType, SecurityEventSeverity> = {
   // WARNING: a repeat attempt on a known address is mildly interesting, where
   // a first registration (USER_REGISTERED) is not.
   REGISTER_DUPLICATE_EMAIL: SecurityEventSeverity.WARNING,
+
+  // A Project owner reconfigured a Provider app (ADR 0009). WARNING, matching
+  // the other PROJECT_*_POLICY_CHANGED events — a config change worth seeing
+  // in the log, not an alarm.
+  PROJECT_OAUTH_CONFIG_CHANGED: SecurityEventSeverity.WARNING,
 };
 
 /**

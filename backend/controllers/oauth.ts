@@ -7,8 +7,8 @@ import { requireDeviceId } from "../utils/requestGuards";
 import { oauthCookieOptions } from "../config/cookies";
 import { resolveProjectIdOrThrow } from "../lib/projects";
 import {
-  getOAuthProvider,
-  enabledProviders,
+  resolveProjectProvider,
+  enabledProvidersForProject,
   type OAuthProfile,
   type OAuthProvider,
 } from "../lib/oauth/providers";
@@ -59,17 +59,27 @@ function oauthTokenFields(tokens: OAuth2Tokens) {
   };
 }
 
-export const listProviders: RequestHandler = (_req, res) => {
-  res.json({ providers: enabledProviders() });
+export const listProviders: RequestHandler = async (req, res, next) => {
+  try {
+    // Provider resolution is Project-scoped now (a Project can override or
+    // disable any of them), so the login page must say which Project it is
+    // rendering for.
+    const projectIdParam =
+      typeof req.query.projectId === "string" ? req.query.projectId : undefined;
+    const projectId = await resolveProjectIdOrThrow(
+      projectIdParam,
+      "query parameter: projectId",
+    );
+
+    res.json({ providers: await enabledProvidersForProject(projectId) });
+  } catch (error) {
+    next(error);
+  }
 };
 
 export const startOAuth: RequestHandler = async (req, res, next) => {
   try {
-    const provider = getOAuthProvider(req.params.provider ?? "");
-
-    if (!provider) {
-      return next(appError(404, "Unknown provider", "provider_not_found"));
-    }
+    const providerId = req.params.provider ?? "";
 
     // A redirect flow can't carry X-Project-Id, so the project travels as a
     // query param on the way out and, HMAC-signed, inside `state` on the way
@@ -80,6 +90,15 @@ export const startOAuth: RequestHandler = async (req, res, next) => {
       projectIdParam,
       "query parameter: projectId",
     );
+
+    // The Project's own Provider app when it has one, the instance default
+    // otherwise; undefined when the Project disabled this provider or no
+    // provider by that id exists at all.
+    const provider = await resolveProjectProvider(projectId, providerId);
+
+    if (!provider) {
+      return next(appError(404, "Unknown provider", "provider_not_found"));
+    }
 
     const state = signState(projectId);
     const codeVerifier = generateCodeVerifier();
@@ -225,10 +244,9 @@ function readAndClearCookie(req: Request, res: Response, name: string) {
   return value;
 }
 
-export const oauthCallback: RequestHandler = async (req, res, next) => {
+export const oauthCallback: RequestHandler = async (req, res) => {
   const context = requestContext(req);
   const providerId = req.params.provider ?? "";
-  const provider = getOAuthProvider(providerId);
 
   const stateCookie = readAndClearCookie(req, res, STATE_COOKIE);
   const codeVerifier = readAndClearCookie(req, res, VERIFIER_COOKIE);
@@ -273,10 +291,6 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
   }
 
   try {
-    if (!provider) {
-      return next(appError(404, "Unknown provider", "provider_not_found"));
-    }
-
     if (typeof req.query.error === "string") {
       return await fail(req.query.error);
     }
@@ -302,6 +316,19 @@ export const oauthCallback: RequestHandler = async (req, res, next) => {
     // produced (project_id_missing/_invalid/not_found).
     if (projectResolutionError) {
       throw projectResolutionError;
+    }
+
+    // Resolved against the verified Project id, so the callback builds the
+    // same client `startOAuth` did — the Project's own Provider app, or the
+    // instance default. undefined means the Project disabled it (or it was
+    // never a real provider).
+    const provider = await resolveProjectProvider(
+      attributedProjectId!,
+      providerId,
+    );
+
+    if (!provider) {
+      return await fail("provider_not_found");
     }
 
     if (provider.usesPkce && !codeVerifier) {

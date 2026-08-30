@@ -112,3 +112,14 @@ API key. Bootstrapped by `scripts/promoteStaff.ts`, extended thereafter by
 staff promoting other platform users.
 _Avoid_: superuser; global admin (there is no cross-instance tier); "kauth
 admin" (ambiguous between staff and a tenant's own admins).
+
+**Provider app**:
+A Project's own OAuth application registered at Google or GitHub — its
+client id, plus a client secret stored encrypted — so that Project's social
+logins run through the tenant's own OAuth client instead of the instance-wide
+one configured by env var. A Project with no Provider app for a given
+provider inherits the instance one; it can also explicitly disable a provider
+outright, offering neither.
+_Avoid_: OAuth app (ambiguous — say Provider app for the per-Project one,
+instance provider for the env-configured default); "OAuth credentials" (too
+generic).
