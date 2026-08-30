@@ -89,14 +89,27 @@ different registrable domain would need `SameSite=None; Secure`.
 
 | Method | Path | Notes |
 | ------ | ---- | ----- |
-| GET | `/oauth/providers` | Which providers are configured. |
-| GET | `/oauth/:provider` | Redirects to the provider. |
+| GET | `/oauth/providers?projectId=…` | The provider set effective for that Project. `projectId` is required. |
+| GET | `/oauth/:provider?projectId=…` | Redirects to the provider. The Project id is carried back in an HMAC-signed `state`. |
 | GET | `/oauth/:provider/callback` | Redirects to `<FRONTEND_URL>/oauth/callback?code=…` or `?error=…`. |
 | POST | `/oauth/exchange` | Requires `X-Device-Id`. Trades the code for a token pair. |
 
 The callback hands the browser a short-lived single-use code rather than the
 tokens themselves: a redirect cannot carry the `X-Device-Id` header a session
 needs, and session tokens in a URL would leak into history and referrers.
+
+### Per-Project Provider apps
+
+The instance `GOOGLE_*` / `GITHUB_*` env config is an **inheritable default**:
+a Project with no Provider app of its own authenticates its users through it,
+exactly as before. A Project owner can override it — register the Project's
+own OAuth client so end users see the tenant's brand and tokens are issued to
+the tenant's app — or disable a provider for the Project outright, through
+owner-session-only routes under `/projects/:projectId/oauth/providers`
+(`GET` / `PUT /:provider` / `DELETE /:provider`; a secret key is rejected).
+The stored `client_secret` is encrypted at rest and is never returned by any
+endpoint, logged, or written to audit metadata. See
+[`docs/adr/0009-per-project-oauth-credentials.md`](../docs/adr/0009-per-project-oauth-credentials.md).
 
 ### Other
 

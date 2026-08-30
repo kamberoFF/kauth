@@ -3,7 +3,7 @@
 **Living document.** Unlike the dated audit and remediation logs, this file is
 kept current — if it disagrees with the code, the file is wrong.
 
-Last reviewed: 2026-08-29.
+Last reviewed: 2026-08-30.
 
 **Multi-tenancy pivot: foundation complete.** As of 2026-08-22 kauth has been
 extended into a self-hosted, multi-tenant auth platform — see
@@ -40,9 +40,21 @@ genuinely new reads (Project-wide session list, event log) are mirrored onto
 the secret-key `/project/*` surface, with `backend-sdk` `listSessions()` /
 `listEvents()` to match. **No tenant-admin role was introduced** — `Role.ADMIN`
 still gates nothing in a tenant Project and ADR 0007's deferral stands (see
-"RBAC enforcement" below). Contract → `0.7.0`; this is the shared epic-2 bump,
-and the per-Project OAuth half rides the same number. **Next up:** the rest of
-that batch — per-Project OAuth apps and the first frontend auth pages — then
+"RBAC enforcement" below). Epic 2's second half shipped 2026-08-30:
+**per-Project OAuth Provider apps** (ADR 0009). Each Project may register its
+own Google/GitHub OAuth app — `client_id` plaintext, `client_secret`
+encrypted under a dedicated `kauth:project-oauth` `cryptoBox` namespace — or
+disable a provider outright; a Project with no Provider app inherits the
+instance env config, which stays the zero-config default. The Project id now
+travels in an HMAC-signed `state` (`kauth:oauth-state` namespace) instead of
+the removed `kauth_oauth_project` cookie, and `GET /oauth/providers` takes a
+required `?projectId=`. Owner-session-only management lives at
+`/projects/:projectId/oauth/providers`; every change writes
+`PROJECT_OAUTH_CONFIG_CHANGED` and the secret never leaves the database.
+Contract → `0.7.0` was the single shared epic-2 bump (landed in the
+tenant-RBAC half); both SDKs redeploy once at epic close, `client-sdk`
+unchanged (it does not call `/oauth/providers`). **Batch epic 2 is
+complete.** **Next up:** the first frontend auth pages (epic 3), then
 passkeys and asymmetric access-token signing.
 
 It replaces the five-phase hardening plan that used to live in `backend/docs/`.
@@ -65,7 +77,9 @@ Enough context to read the rest of this file.
   opt-in, bearer taking precedence over cookie.
 - **Social login** — Google and GitHub via arctic, an `accounts` table in the
   better-auth shape, email-verified linking policy, code-based callback
-  exchange, and a registration hook for further providers.
+  exchange, and a registration hook for further providers. Per-Project
+  Provider apps (bring-your-own OAuth client, or disable a provider) layer on
+  top; the instance env config is the inheritable default (ADR 0009).
 - **Recovery** — email verification and password reset on single-use hashed
   tokens; a completed reset revokes every session.
 - **Abuse controls** — per-IP and per-account rate limits, stateless signed
@@ -82,7 +96,7 @@ Enough context to read the rest of this file.
   (`SESSION_INACTIVITY_DAYS`, default 14) rejects idle sessions.
 - **Audit log** — `security_events` written for every auth-relevant transition,
   with severity derived from the event type rather than the call site.
-- **Verification** — 410 integration tests against real Postgres covering
+- **Verification** — 477 integration tests against real Postgres covering
   abuse cases (reuse, revoked-session access, throttling, device mismatch,
   CSRF, MFA challenges, staff-gate bypasses), run in CI alongside typecheck,
   lint, and `bun audit`.
@@ -237,6 +251,36 @@ Owner *write* routes (settings, keys) still reject a secret-key-only request
 with `401`. Contract → `0.7.0` across the server and both SDKs; this is the
 **shared epic-2 bump** — the per-Project OAuth half rides the same number.
 `client-sdk` moved too, lockstep-only (no API change this half).
+
+**Update 2026-08-30 — per-Project OAuth Provider apps (epic 2, second half;
+ADR 0009).** Google/GitHub OAuth apps were configured once per instance by
+env var; every tenant's end users authenticated against the operator's OAuth
+client. Now each Project may register its own **Provider app**:
+
+- **`ProjectOAuthCredential`** table, one row per `(project_id, provider_id)`,
+  `mode` ∈ `OVERRIDE | DISABLED`. `client_id` plaintext (it rides in redirect
+  URLs); `client_secret_enc` AES-256-GCM via `cryptoBox` under a dedicated
+  `kauth:project-oauth` derivation namespace (`lib/cryptoBox.ts` gained a
+  context parameter; the MFA call sites pass `kauth:mfa-totp` unchanged).
+- **Precedence** — no row → inherit the instance env config (the zero-config
+  default is unchanged); `OVERRIDE` → the Project's own client fully replaces
+  it; `DISABLED` → the provider is offered by neither.
+- **Project binding** — the Project id travels in an HMAC-signed `state`
+  (`<random>.<projectId>.<hmac>`, key derived under `kauth:oauth-state`), and
+  the `kauth_oauth_project` cookie is removed. The callback compares the full
+  signed `state` to the `kauth_oauth_state` cookie *and* verifies the HMAC.
+  One instance-wide callback URL per provider, unchanged.
+- **`GET /oauth/providers`** now takes a required `?projectId=` and returns
+  that Project's effective set (under `oauthLimiter`).
+- **Management** — owner-session only at `/projects/:projectId/oauth/providers`
+  (`GET` / `PUT /:provider` / `DELETE /:provider`); a secret key is `401`.
+  Every change writes `PROJECT_OAUTH_CONFIG_CHANGED` (WARNING) in the same
+  transaction, `metadata { provider, action }` — never the secret or the
+  `client_id`.
+
+No contract re-bump (`0.7.0` was the shared epic-2 bump). `client-sdk` is
+unchanged — it does not call `/oauth/providers`. **This closes batch epic 2**
+(tenant-RBAC + per-Project OAuth); epic 3 is the first frontend auth pages.
 
 ## Before starting the SDK — satisfied and shipped 2026-08-24
 

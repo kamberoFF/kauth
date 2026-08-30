@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done — all five tickets merged to main 2026-08-30
 
 # Per-Project OAuth credentials — bring-your-own provider apps
 

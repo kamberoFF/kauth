@@ -1,6 +1,6 @@
 # 05 — Closeout: ADR 0009 + client-sdk + docs-sync
 
-Status: ready-for-agent
+Status: done
 
 **What to build:** the decision record and the living docs describe
 per-Project OAuth as shipped.
@@ -30,9 +30,9 @@ per-Project OAuth as shipped.
 
 **Blocked by:** 04
 
-- [ ] `docs/adr/0009-per-project-oauth-credentials.md` matches the shipped implementation and is committed as accepted
-- [ ] `client-sdk` either passes `projectId` to `/oauth/providers` or the ticket records that it does not call that endpoint
-- [ ] `docs/roadmap.md` describes per-Project OAuth as shipped, lists ADR 0009, and marks batch epic 2 complete with the contract at `0.7.0`
-- [ ] `backend/README.md` / `.env.example` describe the instance OAuth config as an inheritable default and mention per-Project Provider apps
-- [ ] `CONTEXT.md`'s **Provider app** entry is consistent with what shipped
-- [ ] `bun test`, `bun run typecheck`, `bun run lint` all green
+- [x] `docs/adr/0009-per-project-oauth-credentials.md` matches the shipped implementation and is committed as accepted
+- [x] `client-sdk` does not call `GET /oauth/providers` (no oauth references in `packages/client-sdk/`), so no code change — recorded here
+- [x] `docs/roadmap.md` describes per-Project OAuth as shipped, references ADR 0009, and marks batch epic 2 complete with the contract at `0.7.0`
+- [x] `backend/README.md` / `.env.example` describe the instance OAuth config as an inheritable default and mention per-Project Provider apps
+- [x] `CONTEXT.md`'s **Provider app** entry is consistent with what shipped (verify pass — no edit needed)
+- [x] `bun test`, `bun run typecheck`, `bun run lint` all green
